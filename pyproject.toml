@@ -17,3 +17,11 @@ emblab = "emblab.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["emblab*"]
+
+[tool.pytest.ini_options]
+# workspace/ is gitignored and disposable, but once a build has actually run
+# it contains real cloned source trees (e.g. workspace/src/barebox) with
+# their own test suites — without this, a bare `pytest` from the repo root
+# recurses into them and can run for many minutes instead of the offline
+# suite's fraction of a second.
+testpaths = ["tests"]
