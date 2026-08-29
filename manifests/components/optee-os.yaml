@@ -1,0 +1,30 @@
+name: optee-os
+description: >
+  OP-TEE trusted OS core. Build flags transcribed verbatim from
+  barebox-arm64-poc/build.sh (a proven, working invocation for
+  vexpress-qemu_armv8a). Ref pinned to 'master' for now — pin an exact tag
+  once validated end-to-end (see CONTEXT.md).
+source:
+  git: https://github.com/OP-TEE/optee_os.git
+  ref: master
+  path: optee-os
+image: gnu-aarch64
+build:
+  vars:
+    platform: vexpress-qemu_armv8a
+  command: >-
+    make -j${env.JOBS} DEBUG=1 CFG_TEE_TA_LOG_LEVEL=4 CFG_TEE_CORE_LOG_LEVEL=4
+    CFG_TEE_CORE_DEBUG=y CFG_TEE_CORE_TA_TRACE=y CFG_ENABLE_EMBEDDED_TESTS=y
+    CFG_USER_TA_TARGETS=ta_arm64 CFG_HWRNG_RATE=0 CFG_HWRNG_QUALITY=1024
+    CFG_WITH_SOFTWARE_PRNG=n CFG_WITH_DUMMY_HWRNG=y CFG_HWRNG_PTA=y
+    CFG_WITH_USER_TA=y CFG_EARLY_TA=y CFG_EMBEDDED_TS=y CFG_PKCS11_TA=y CFG_AVB_TA=y
+    CFG_SYSTEM_PTA=y CFG_SECURE=n CFG_INSECURE=y CFG_GP_SOCKETS=n CFG_REE_FS=y
+    CFG_REE_FS_TA=y TEE_STORAGE_PRIVATE=y
+    CFG_IN_TREE_EARLY_TAS="pkcs11/fd02c9da-306c-48c7-a49c-bbd827ae86ee avb/023f8f1a-292a-432b-8fc4-de8471358067 trusted_keys/f04a0fe7-1f5d-4b9b-abf7-619b85b4ce8c remoteproc/80a4c275-0a47-4905-8285-1486a9771a08"
+    CFG_CORE_DYN_SHM=y CFG_CORE_HEAP_SIZE=524288 CFG_DEVICE_ENUM_PTA=y
+    CFG_RPMB_WRITE_KEY=y CROSS_COMPILE64=aarch64-linux-gnu- CROSS_COMPILE32=arm-linux-gnu-
+    CFG_SHOW_CONF_ON_BOOT=y CFG_SEMIHOSTING=y PLATFORM=${vars.platform} CFG_TEE_CORE_PAGER=y
+artifacts:
+  tee-header: out/arm-plat-vexpress/core/tee-header_v2.bin
+  tee-pager: out/arm-plat-vexpress/core/tee-pager_v2.bin
+  tee-pageable: out/arm-plat-vexpress/core/tee-pageable_v2.bin

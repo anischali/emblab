@@ -1,0 +1,12 @@
+description: fixture component A, produces artifact "out"
+source:
+  git: https://example.invalid/a.git
+  ref: main
+  path: fake-a
+image: fake-image
+build:
+  vars:
+    greeting: hello
+  command: "echo ${vars.greeting} > out.txt"
+artifacts:
+  out: out.txt

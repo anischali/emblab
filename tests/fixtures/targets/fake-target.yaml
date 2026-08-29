@@ -1,0 +1,13 @@
+description: fixture target wiring fake-b's input to fake-a's artifact
+arch: fake
+stack:
+  - component: fake-a
+    vars: {}
+  - component: fake-b
+    vars:
+      input: ${fake-a.out}
+qemu:
+  binary: "true"
+  args:
+    - "-x"
+    - "${fake-a.out}"

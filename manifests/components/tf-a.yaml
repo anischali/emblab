@@ -1,0 +1,33 @@
+name: tf-a
+description: >
+  Trusted Firmware-A, PLAT=qemu. BL32/BL33 are left as vars so a target can
+  wire in OP-TEE and any BL33 provider (barebox/u-boot/edk2) — this is a
+  pure component, it never references another component itself; only a
+  target's stack vars may do that. Build flags transcribed verbatim from
+  barebox-arm64-poc/build.sh. Ref pinned to 'master' for now — pin an exact
+  tag once validated end-to-end (see CONTEXT.md).
+source:
+  git: https://git.trustedfirmware.org/TF-A/trusted-firmware-a.git
+  ref: master
+  path: trusted-firmware-a
+image: gnu-aarch64
+build:
+  vars:
+    plat: qemu
+    # Empty by default (no secure payload). A target that wants OP-TEE as
+    # BL32 sets this to the fully-formed "BL32=... BL32_EXTRA1=... BL32_EXTRA2=..."
+    # string — make needs these flags entirely ABSENT for "no secure OS",
+    # not present-with-empty-value, so a single conditionally-populated var
+    # is the minimal way to express that.
+    bl32_flags: ""
+    bl33: ""
+  command: >-
+    make -j${env.JOBS} CROSS_COMPILE=aarch64-linux-gnu- PLAT=${vars.plat} DEBUG=1 -B
+    RESET_TO_BL31=1 LOG_LEVEL=30
+    ${vars.bl32_flags}
+    BL32_RAM_LOCATION=tdram SPD=opteed GENERATE_COT=1 all fip
+    ARM_LINUX_KERNEL_AS_BL33=1 BL33=${vars.bl33}
+artifacts:
+  bl1: build/qemu/debug/bl1.bin
+  fip: build/qemu/debug/fip.bin
+  qemu_fw: build/qemu/debug/qemu_fw.bios

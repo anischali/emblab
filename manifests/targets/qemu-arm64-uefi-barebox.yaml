@@ -1,0 +1,32 @@
+name: qemu-arm64-uefi-barebox
+description: >
+  Plain UEFI + barebox, no TF-A/OP-TEE. QEMU args transcribed verbatim from
+  barebox-arm64-poc/generate-fit's currently-active (uncommented) boot
+  invocation.
+arch: arm64
+stack:
+  - component: barebox
+    vars: {}
+qemu:
+  binary: qemu-system-aarch64
+  args:
+    - "-cpu"
+    - "cortex-a57"
+    - "-M"
+    - "virt,acpi=off"
+    - "-m"
+    - "1G"
+    - "-serial"
+    - "mon:stdio"
+    - "-device"
+    - "virtio-rng-pci"
+    - "-device"
+    - "ramfb"
+    - "-bios"
+    - "/usr/share/edk2/aarch64/QEMU_EFI.silent.fd"
+    - "-drive"
+    - "if=none,format=raw,file=fat:rw:${env.WORKSPACE}/artifacts/qemu-arm64-uefi-barebox/esp,id=esp5"
+    - "-device"
+    - "virtio-blk-device,drive=esp5"
+    - "-drive"
+    - "file=${env.WORKSPACE}/artifacts/qemu-arm64-uefi-barebox/state.img,format=raw"

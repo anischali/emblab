@@ -1,0 +1,27 @@
+name: barebox
+description: >
+  UNVERIFIED build command. No barebox `make`/defconfig invocation was
+  found anywhere in barebox-arm64-poc (build.sh, build-rpi5.sh, notes.txt)
+  — only its *output path* is proven, referenced directly as
+  ../barebox/images/barebox-dt-2nd.img in build.sh's BL33= argument. This
+  manifest uses barebox's standard defconfig+make pattern with
+  vexpress_v8_defconfig (the closest stock defconfig to QEMU virt/aarch64)
+  as a best-effort starting point. MUST be validated against a real `git
+  clone` before being trusted — see CONTEXT.md's Next section.
+source:
+  git: https://git.pengutronix.de/git/barebox
+  ref: master
+  path: barebox
+image: gnu-aarch64
+build:
+  vars:
+    defconfig: vexpress_v8_defconfig
+  # $CROSS_COMPILE (unbraced) is a real shell env var, set by the gnu-aarch64
+  # image's `env:` block and injected into the container at run time — it is
+  # NOT an emblab ${...} template token (those only resolve vars./env.JOBS/
+  # env.WORKSPACE/<component>.<artifact>; see templating.py's default_env()).
+  command: >-
+    make ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
+    make ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS}
+artifacts:
+  barebox-dt-2nd: images/barebox-dt-2nd.img

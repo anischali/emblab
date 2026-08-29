@@ -1,0 +1,47 @@
+name: qemu-arm64-secureboot
+description: >
+  TF-A BL1/BL2/BL31 + OP-TEE BL32 + barebox BL33, secure=on. QEMU args
+  transcribed verbatim from barebox-arm64-poc/generate-fit's known-correct
+  (currently commented out) secure-boot invocation. Exercises the full
+  schema: a three-component stack, cross-component artifact wiring, and a
+  conditionally-populated flag-group var.
+arch: arm64
+stack:
+  - component: optee-os
+    vars:
+      platform: vexpress-qemu_armv8a
+  - component: barebox
+    vars: {}
+  - component: tf-a
+    vars:
+      plat: qemu
+      bl32_flags: >-
+        BL32=${optee-os.tee-header} BL32_EXTRA1=${optee-os.tee-pager} BL32_EXTRA2=${optee-os.tee-pageable}
+      bl33: ${barebox.barebox-dt-2nd}
+qemu:
+  binary: qemu-system-aarch64
+  args:
+    - "-cpu"
+    - "cortex-a57"
+    - "-M"
+    - "virt,secure=on"
+    - "-m"
+    - "1G"
+    - "-serial"
+    - "mon:stdio"
+    - "-serial"
+    - "file:${env.WORKSPACE}/artifacts/qemu-arm64-secureboot/optee.log"
+    - "-device"
+    - "virtio-rng-pci"
+    - "-device"
+    - "ramfb"
+    - "-drive"
+    - "if=none,format=raw,file=fat:rw:${env.WORKSPACE}/artifacts/qemu-arm64-secureboot/esp,id=esp"
+    - "-device"
+    - "virtio-blk-device,drive=esp"
+    - "-semihosting-config"
+    - "enable=on,target=native"
+    - "-device"
+    - "sdhci-pci,id=sdhci0"
+    - "-bios"
+    - "${tf-a.qemu_fw}"

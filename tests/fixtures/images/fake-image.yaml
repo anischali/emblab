@@ -1,0 +1,6 @@
+description: fixture image for offline manifest/build-plan tests
+base_image: fake/base:latest
+provision:
+  - echo hello
+env:
+  FOO: bar

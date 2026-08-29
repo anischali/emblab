@@ -1,0 +1,12 @@
+description: fixture component B, never references fake-a itself (only a target may wire that)
+source:
+  git: https://example.invalid/b.git
+  ref: main
+  path: fake-b
+image: fake-image
+build:
+  vars:
+    input: ""
+  command: "cat ${vars.input} > out.txt"
+artifacts:
+  out: out.txt
