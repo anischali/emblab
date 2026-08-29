@@ -39,11 +39,23 @@ def component_refs(value, known_components):
     return refs
 
 
-def default_env(workspace_dir):
-    """The small, fixed set of ``env.*`` values available to every manifest."""
+def default_env(workspace_dir, arch=""):
+    """The small, fixed set of ``env.*`` values available to every manifest.
+
+    ``ARCH`` is the *target's* ``arch:`` field, resolved purely as a
+    ``${env.ARCH}`` template token — not a real container env var. That
+    matters: a real env var is visible to every process in a component's
+    container whether or not that component's own command asked for it,
+    which broke OP-TEE's build (its make rules read ARCH from the
+    environment and default it to "arm" internally; force-setting "arm64"
+    there was wrong even though OP-TEE's command never mentions ARCH at
+    all). A template token only ever reaches the one command that
+    literally writes ``${env.ARCH}`` — see ADR-006.
+    """
     return {
         "JOBS": str(os.cpu_count() or 1),
         "WORKSPACE": str(workspace_dir),
+        "ARCH": arch,
     }
 
 

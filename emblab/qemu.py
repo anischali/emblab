@@ -14,7 +14,7 @@ from .errors import BuildError
 
 
 def resolve_args(target, workspace):
-    env = templating.default_env(workspace)
+    env = templating.default_env(workspace, target.arch)
     artifacts_by_component = {}
     for entry in target.stack:
         component = manifests.load_component(entry.component)

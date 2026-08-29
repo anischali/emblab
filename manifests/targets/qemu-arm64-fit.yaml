@@ -1,0 +1,38 @@
+name: qemu-arm64-fit
+description: >
+  Demonstrates multi-artifact composition: linux-kernel (Image) + uroot-
+  ramdisk (initramfs.cpio) are both built, then packaged together by
+  fit-image (mkimage) to prove the "N build outputs -> 1 packaged output"
+  pattern the schema supports via ${component.artifact} tokens in a
+  target's stack vars — no schema change was needed for this, see
+  ADR-005's Context. QEMU boot deliberately does NOT go through the FIT/
+  barebox path (unverified, future work) — it boots the kernel+initrd
+  directly via QEMU's own standard -kernel/-initrd flags, so this target
+  is genuinely runnable even though linux-kernel.yaml itself is still
+  UNVERIFIED.
+arch: arm64
+stack:
+  - component: linux-kernel
+    vars: {}
+  - component: uroot-ramdisk
+    vars: {}
+  - component: fit-image
+    vars:
+      kernel: ${linux-kernel.image}
+      ramdisk: ${uroot-ramdisk.cpio}
+qemu:
+  binary: qemu-system-aarch64
+  args:
+    - "-cpu"
+    - "cortex-a57"
+    - "-M"
+    - "virt"
+    - "-m"
+    - "1G"
+    - "-nographic"
+    - "-kernel"
+    - "${linux-kernel.image}"
+    - "-initrd"
+    - "${uroot-ramdisk.cpio}"
+    - "-append"
+    - "console=ttyAMA0"

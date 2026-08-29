@@ -57,6 +57,34 @@ def ensure_image(image, workspace, *, log=print):
     log(f"[{image.name}] provisioned")
 
 
+def ensure_builddeps(image, component, workspace, *, log=print):
+    """Install a component's extra apt packages (build.builddeps) into its
+    image container, once per (image, component) pair — skipped on later
+    builds unless the list changes. Kept separate from ensure_image's own
+    provisioning marker because several components can share one image
+    container while each needing a different extra package set; installs
+    accumulate in the shared container rather than replacing each other."""
+    if not component.build.builddeps:
+        return
+
+    marker_path = state.builddeps_marker_path(workspace, image.name, component.name)
+    current_hash = state.builddeps_hash(component.build.builddeps)
+    if state.marker_matches(marker_path, current_hash):
+        log(f"[{image.name}] {component.name}: builddeps already installed, skipping")
+        return
+
+    deps = " ".join(component.build.builddeps)
+    log(f"[{image.name}] {component.name}: installing builddeps: {deps}")
+    run(
+        image,
+        workspace,
+        command=["sh", "-c", f"apt-get update && apt-get install -y --no-install-recommends {deps}"],
+        workdir="/",
+        log=log,
+    )
+    state.write_marker(marker_path, current_hash)
+
+
 def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
     """Run `command` inside the provisioned container for `image`.
 

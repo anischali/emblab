@@ -11,13 +11,14 @@ stack:
     vars:
       platform: vexpress-qemu_armv8a
   - component: barebox
-    vars: {}
+    vars:
+      defconfig: multi_v8_defconfig
   - component: tf-a
     vars:
       plat: qemu
       bl32_flags: >-
         BL32=${optee-os.tee-header} BL32_EXTRA1=${optee-os.tee-pager} BL32_EXTRA2=${optee-os.tee-pageable}
-      bl33: ${barebox.barebox-dt-2nd}
+      bl33: ${barebox.images}/barebox-dt-2nd.img
 qemu:
   binary: qemu-system-aarch64
   args:

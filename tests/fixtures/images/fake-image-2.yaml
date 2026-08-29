@@ -1,0 +1,6 @@
+description: second fixture image, for stack-entry image-override tests
+base_image: fake/base2:latest
+provision:
+  - echo hello2
+env:
+  FOO: baz

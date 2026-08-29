@@ -1,4 +1,7 @@
-"""Fetch component source trees: shallow git clone/checkout at a pinned ref.
+"""Fetch component source trees: shallow git clone/checkout at a pinned ref,
+then apply the component's declared build.patches on top (Yocto-style: each
+component owns a manifests/components/<name>/files/ directory holding its
+own patches, applied in the order listed).
 
 Phase 1 manifests pin `ref` to a branch name (e.g. "master") rather than an
 exact SHA — `git clone --depth 1 --branch <ref>` only works for branches/tags,
@@ -11,6 +14,10 @@ advertise arbitrary commits for shallow-clone-by-branch.
 import shutil
 import subprocess
 from pathlib import Path
+
+from . import manifests, state
+
+PATCHES_MARKER_NAME = ".emblab-patches-hash"
 
 
 def source_dir(workspace, component):
@@ -32,18 +39,45 @@ def _resolve_remote_ref(url, ref):
     return lines[0].split()[0] if lines else None
 
 
+def _apply_patches(dest, component, *, log=print):
+    for filename in component.build.patches:
+        patch_path = manifests.component_file_path(component.name, filename)
+        log(f"[{component.name}] applying patch {filename}")
+        subprocess.run(["git", "apply", str(patch_path)], cwd=dest, check=True)
+
+
 def ensure_source(workspace, component, *, log=print):
-    """Clone `component`'s source if missing, or re-fetch if the pinned ref
-    has moved upstream. Returns the local source directory path."""
+    """Clone `component`'s source if missing, re-fetch if the pinned ref has
+    moved upstream, or re-fetch if build.patches changed — a patch is only
+    ever applied once, right after a fresh clone, onto a known-pristine tree
+    (never reapplied onto an already-patched, possibly-mid-build checkout).
+    Returns the local source directory path.
+
+    A sourceless component (component.source.git is None — a purely local
+    packaging/assembly step like fit-image, with no upstream repo) just
+    gets an empty workdir; there is nothing to clone or patch.
+    """
     dest = source_dir(workspace, component)
+
+    if component.source.git is None:
+        dest.mkdir(parents=True, exist_ok=True)
+        return dest
+
+    current_patches_hash = state.patches_hash(component.name, component.build.patches)
+    patches_marker = dest / PATCHES_MARKER_NAME
 
     if dest.exists() and (dest / ".git").exists():
         head = _current_head(dest)
         remote_sha = _resolve_remote_ref(component.source.git, component.source.ref)
-        if remote_sha is None or head == remote_sha:
+        ref_moved = remote_sha is not None and head != remote_sha
+        patches_changed = not state.marker_matches(patches_marker, current_patches_hash)
+        if not ref_moved and not patches_changed:
             log(f"[{component.name}] source up to date at {dest}")
             return dest
-        log(f"[{component.name}] ref '{component.source.ref}' moved upstream, re-cloning")
+        if ref_moved:
+            log(f"[{component.name}] ref '{component.source.ref}' moved upstream, re-cloning")
+        else:
+            log(f"[{component.name}] build.patches changed, re-cloning to reapply cleanly")
         shutil.rmtree(dest)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -56,4 +90,8 @@ def ensure_source(workspace, component, *, log=print):
         check=True,
     )
     log(f"[{component.name}] cloned {component.source.git}@{component.source.ref} -> {dest}")
+
+    _apply_patches(dest, component, log=log)
+    state.write_marker(patches_marker, current_patches_hash)
+
     return dest

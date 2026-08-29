@@ -1,0 +1,49 @@
+/*
+ * Trimmed from barebox-arm64-poc/fit-image.its: kept kernel-1 + ramdisk-1 +
+ * conf-1 (fdt left commented out, exactly as the real, working aarch64
+ * config already does — see ADR-005 / fit-image.yaml's description).
+ * Dropped: the x86 kernel stanza, conf-2/conf-3, and the signature block
+ * (fit-image.yaml is unsigned for now).
+ */
+/dts-v1/;
+
+/ {
+    description = "FIT image with kernel and initramfs";
+    #address-cells = <1>;
+
+    images {
+        kernel-1 {
+            description = "Linux kernel";
+            data = /incbin/("Image");
+            type = "kernel";
+            arch = "arm64";
+            os = "linux";
+            compression = "none";
+            hash-1 {
+                algo = "sha256";
+            };
+        };
+
+        ramdisk-1 {
+            description = "Initramfs";
+            data = /incbin/("initramfs.cpio.gz");
+            type = "ramdisk";
+            arch = "arm64";
+            compression = "none";
+            hash-1 {
+                algo = "sha256";
+            };
+        };
+    };
+
+    configurations {
+        default = "conf-1";
+
+        conf-1 {
+            description = "Default configuration for qemu aarch64";
+            kernel = "kernel-1";
+            //fdt = "fdt-1";
+            ramdisk = "ramdisk-1";
+        };
+    };
+};

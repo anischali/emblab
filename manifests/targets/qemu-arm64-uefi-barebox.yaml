@@ -6,7 +6,8 @@ description: >
 arch: arm64
 stack:
   - component: barebox
-    vars: {}
+    vars:
+      defconfig: efi_v8_defconfig
 qemu:
   binary: qemu-system-aarch64
   args:
@@ -24,9 +25,5 @@ qemu:
     - "ramfb"
     - "-bios"
     - "/usr/share/edk2/aarch64/QEMU_EFI.silent.fd"
-    - "-drive"
-    - "if=none,format=raw,file=fat:rw:${env.WORKSPACE}/artifacts/qemu-arm64-uefi-barebox/esp,id=esp5"
-    - "-device"
-    - "virtio-blk-device,drive=esp5"
-    - "-drive"
-    - "file=${env.WORKSPACE}/artifacts/qemu-arm64-uefi-barebox/state.img,format=raw"
+    - "-kernel"
+    - "${barebox.images}/barebox-dt-2nd.img"

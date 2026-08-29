@@ -24,7 +24,7 @@ def build(target_name, workspace, *, force=False, only=None, log=print):
         order = order[: order.index(only) + 1]
 
     entries_by_component = {entry.component: entry for entry in target.stack}
-    env = templating.default_env(workspace)
+    env = templating.default_env(workspace, target.arch)
     artifacts_by_component = {}
 
     artifacts_root = Path(workspace) / "artifacts" / target.name
@@ -33,8 +33,8 @@ def build(target_name, workspace, *, force=False, only=None, log=print):
     built = []
     for component_name in order:
         component = manifests.load_component(component_name)
-        image = manifests.load_image(component.image)
         entry = entries_by_component[component_name]
+        image = manifests.load_image(entry.image or component.image)
 
         containers.ensure_image(image, workspace, log=log)
         src_dir = sources.ensure_source(workspace, component, log=log)
@@ -49,6 +49,12 @@ def build(target_name, workspace, *, force=False, only=None, log=print):
         if not force and have_artifacts and state.marker_matches(marker_path, current_hash):
             log(f"[{component_name}] unchanged, skipping build")
         else:
+            containers.ensure_builddeps(image, component, workspace, log=log)
+
+            for filename in component.build.files:
+                file_src = manifests.component_file_path(component_name, filename)
+                shutil.copy2(file_src, src_dir / filename)
+
             rendered_cmd = templating.render_command(
                 component.build.command, resolved_vars=resolved_vars, env=env
             )
@@ -71,7 +77,14 @@ def build(target_name, workspace, *, force=False, only=None, log=print):
                         f"[{component_name}] declared artifact '{key}' not found at "
                         f"{src} after build — check this component's artifacts: paths"
                     )
-                shutil.copy2(src, dst)
+                if dst.is_dir():
+                    shutil.rmtree(dst)
+                elif dst.exists():
+                    dst.unlink()
+                if src.is_dir():
+                    shutil.copytree(src, dst)
+                else:
+                    shutil.copy2(src, dst)
 
             state.write_marker(marker_path, current_hash)
             log(f"[{component_name}] built, artifacts collected")

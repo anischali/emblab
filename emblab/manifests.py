@@ -31,15 +31,18 @@ class Image:
 
 @dataclasses.dataclass
 class Source:
-    git: str
-    ref: str
-    path: str
+    git: str  # None for a sourceless (purely local packaging) component
+    ref: str  # None for a sourceless component
+    path: str  # always set — the workdir segment under workspace/src/
 
 
 @dataclasses.dataclass
 class Build:
     command: str
     vars: dict
+    files: list  # filenames, each backed by manifests/components/<component>/files/<filename>
+    builddeps: list  # apt package names, installed into the component's image container
+    patches: list  # filenames (same files/ dir), git-applied in order onto a fresh clone
 
 
 @dataclasses.dataclass
@@ -56,6 +59,7 @@ class Component:
 class StackEntry:
     component: str
     vars: dict
+    image: str = None  # None means "use the component's own image"
 
 
 @dataclasses.dataclass
@@ -122,8 +126,20 @@ def image_path(name):
     return MANIFESTS_DIR / "images" / f"{name}.yaml"
 
 
+def component_dir(name):
+    return MANIFESTS_DIR / "components" / name
+
+
 def component_path(name):
-    return MANIFESTS_DIR / "components" / f"{name}.yaml"
+    return component_dir(name) / f"{name}.yaml"
+
+
+def files_dir(name):
+    return component_dir(name) / "files"
+
+
+def component_file_path(component_name, filename):
+    return files_dir(component_name) / filename
 
 
 def target_path(name):
@@ -134,6 +150,10 @@ def list_names(kind):
     directory = MANIFESTS_DIR / kind
     if not directory.exists():
         return []
+    if kind == "components":
+        # Yocto-style: manifests/components/<name>/<name>.yaml, alongside a
+        # files/ dir for that component's own patches and static files.
+        return sorted(p.parent.name for p in directory.glob("*/*.yaml") if p.stem == p.parent.name)
     return sorted(p.stem for p in directory.glob("*.yaml"))
 
 
@@ -153,12 +173,19 @@ def load_component(name):
     path = component_path(name)
     data = _read_yaml(path)
 
-    source_data = _require(data, "source", path)
-    source = Source(
-        git=_require(source_data, "git", path),
-        ref=_require(source_data, "ref", path),
-        path=source_data.get("path", name),
-    )
+    # `source:` is optional — absent means a sourceless component (a purely
+    # local packaging/assembly step, e.g. fit-image, with no upstream repo).
+    # `path` is always resolved (defaults to the component name either way)
+    # so component.source.path keeps working unchanged everywhere else.
+    source_data = data.get("source")
+    if source_data is None:
+        source = Source(git=None, ref=None, path=data.get("path", name))
+    else:
+        source = Source(
+            git=_require(source_data, "git", path),
+            ref=_require(source_data, "ref", path),
+            path=source_data.get("path", name),
+        )
 
     build_data = _require(data, "build", path)
     build_vars = dict(build_data.get("vars", {}))
@@ -166,7 +193,38 @@ def load_component(name):
         _check_no_bare_component_tokens(
             var_value, where=f"{_display(path)}: build.vars.{var_name}"
         )
-    build = Build(command=_require(build_data, "command", path), vars=build_vars)
+
+    build_files = list(build_data.get("files", []))
+    for filename in build_files:
+        file_path = component_file_path(name, filename)
+        if not file_path.exists():
+            raise ManifestError(
+                f"{_display(path)}: build.files entry '{filename}' has no "
+                f"file at manifests/components/{name}/files/{filename}"
+            )
+
+    build_patches = list(build_data.get("patches", []))
+    for filename in build_patches:
+        patch_path = component_file_path(name, filename)
+        if not patch_path.exists():
+            raise ManifestError(
+                f"{_display(path)}: build.patches entry '{filename}' has no "
+                f"file at manifests/components/{name}/files/{filename}"
+            )
+    if build_patches and source_data is None:
+        raise ManifestError(
+            f"{_display(path)}: build.patches is set but this component has "
+            "no source: — patches apply to a cloned source tree, which a "
+            "sourceless (purely local packaging) component doesn't have"
+        )
+
+    build = Build(
+        command=_require(build_data, "command", path),
+        vars=build_vars,
+        files=build_files,
+        builddeps=list(build_data.get("builddeps", [])),
+        patches=build_patches,
+    )
 
     image_name = _require(data, "image", path)
     if not image_path(image_name).exists():
@@ -208,9 +266,24 @@ def load_target(name):
             raise ManifestError(
                 f"{_display(path)}: stack[{i}] references unknown "
                 f"component '{component_name}' (no manifests/components/"
-                f"{component_name}.yaml)"
+                f"{component_name}/{component_name}.yaml)"
             )
-        stack.append(StackEntry(component=component_name, vars=dict(raw_entry.get("vars") or {})))
+
+        image_override = raw_entry.get("image")
+        if image_override is not None and not image_path(image_override).exists():
+            raise ManifestError(
+                f"{_display(path)}: stack[{i}] ('{component_name}') overrides "
+                f"image to '{image_override}', which has no manifest at "
+                f"manifests/images/{image_override}.yaml"
+            )
+
+        stack.append(
+            StackEntry(
+                component=component_name,
+                vars=dict(raw_entry.get("vars") or {}),
+                image=image_override,
+            )
+        )
 
     # Every ${X.Y} reference in a stack entry's vars must point at another
     # component that is actually part of this same target's stack, and must

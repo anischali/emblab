@@ -1,0 +1,34 @@
+name: uroot-ramdisk
+description: >
+  u-root initramfs, optionally embedding other components' build artifacts.
+  Command shape (-o, repeatable -files SRC:DST) transcribed from
+  barebox-arm64-poc/generate-fit's generate_ramdisk(), and cross-checked
+  directly against the real flag definitions in the vendored dependency
+  source (github.com/u-root/mkuimage's uimage/mkuimage/uflags.go: "-files"
+  is repeatable; uimage/uimage.go's ParseExtraFiles doc comment confirms
+  the "src:dst" syntax). -skip-ldd is used because embedded files here are
+  typically cross-compiled for the target arch — the host's ldd shouldn't
+  walk a foreign-arch ELF's dependencies.
+source:
+  git: https://github.com/u-root/u-root.git
+  ref: main
+  path: u-root
+image: go
+build:
+  vars:
+    # Space-separated Go command packages to bundle; empty lets u-root's
+    # own default (github.com/u-root/u-root/cmds/core/*) apply.
+    commands: ""
+    # Space-separated "host-src-path:ramdisk-dst-path" pairs — a target
+    # wires this to ${other-component.artifact}:dest/path, one or more,
+    # space-separated, to embed other components' build outputs. Example:
+    #   embed: "${dt-utils.barebox-state}:bbin/barebox-state"
+    embed: ""
+    output: initramfs.cpio
+  command: >-
+    set -e;
+    FILES_ARGS="";
+    for pair in ${vars.embed}; do FILES_ARGS="$FILES_ARGS -files $pair"; done;
+    GOARCH=arm64 GOOS=linux go run u-root.go -o ${vars.output} -skip-ldd $FILES_ARGS ${vars.commands}
+artifacts:
+  cpio: initramfs.cpio

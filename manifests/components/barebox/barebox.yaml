@@ -1,27 +1,39 @@
 name: barebox
 description: >
-  UNVERIFIED build command. No barebox `make`/defconfig invocation was
-  found anywhere in barebox-arm64-poc (build.sh, build-rpi5.sh, notes.txt)
-  — only its *output path* is proven, referenced directly as
-  ../barebox/images/barebox-dt-2nd.img in build.sh's BL33= argument. This
-  manifest uses barebox's standard defconfig+make pattern with
-  vexpress_v8_defconfig (the closest stock defconfig to QEMU virt/aarch64)
-  as a best-effort starting point. MUST be validated against a real `git
-  clone` before being trusted — see CONTEXT.md's Next section.
+  VERIFIED: `emblab build qemu-arm64-uefi-barebox` has completed for real
+  against this exact source/command/defconfig, producing a genuine
+  barebox-dt-2nd.img — see CONTEXT.md's Proven section. `emblab run
+  qemu-arm64-uefi-barebox` (actually booting it) is still unconfirmed.
+  efi_v8_defconfig was chosen over the originally-guessed
+  vexpress_v8_defconfig once real building started; barebox-arm64-poc
+  itself never invoked a barebox `make`/defconfig step directly — only its
+  *output path* is transcribed from there, as
+  ../barebox/images/barebox-dt-2nd.img in build.sh's BL33= argument.
 source:
-  git: https://git.pengutronix.de/git/barebox
+  git: https://github.com/barebox/barebox
   ref: master
   path: barebox
 image: gnu-aarch64
 build:
   vars:
-    defconfig: vexpress_v8_defconfig
+    defconfig: efi_v8_defconfig
   # $CROSS_COMPILE (unbraced) is a real shell env var, set by the gnu-aarch64
-  # image's `env:` block and injected into the container at run time — it is
-  # NOT an emblab ${...} template token (those only resolve vars./env.JOBS/
-  # env.WORKSPACE/<component>.<artifact>; see templating.py's default_env()).
+  # image's `env:` block and injected into the container at run time.
+  # ${env.ARCH} (braced) is an emblab template token, not a shell var — it
+  # resolves to the *target's* `arch:` field at render time, the same way
+  # ${env.JOBS} already does for os.cpu_count(). Deliberately NOT a real
+  # env var: some upstream build systems (OP-TEE's, for one) read ARCH from
+  # the environment and default it internally even when their own command
+  # never mentions it, so a real env var would leak into builds that never
+  # asked for it — see ADR-006.
   command: >-
-    make ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
-    make ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS}
+    make ARCH=${env.ARCH} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
+    make ARCH=${env.ARCH} CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS}
 artifacts:
-  barebox-dt-2nd: images/barebox-dt-2nd.img
+  # barebox's build drops several files into images/ (barebox-dt-2nd.img
+  # among them); which one a given target cares about is that target's
+  # concern, not this component's — see ADR-006. The whole directory is
+  # declared as one artifact and copied as-is (build.py copies a directory
+  # artifact with copytree instead of copy2); a target picks a file out of
+  # it with e.g. ${barebox.images}/barebox-dt-2nd.img.
+  images: images/

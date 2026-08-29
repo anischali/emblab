@@ -18,8 +18,29 @@ def _hash(obj):
     return hashlib.sha256(blob).hexdigest()
 
 
+def _file_hash(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _files_content_hash(component_name, filenames):
+    from . import manifests  # local import: avoids a manifests<->state import cycle
+
+    return {
+        filename: _file_hash(manifests.component_file_path(component_name, filename))
+        for filename in filenames
+    }
+
+
 def image_hash(image):
     return _hash({"base_image": image.base_image, "provision": image.provision})
+
+
+def patches_hash(component_name, patches):
+    """Content hash of a component's declared build.patches, in order —
+    shared by component_hash() (so an edited patch forces the build command
+    to rerun) and sources.ensure_source() (so an edited patch forces a fresh
+    clone + reapply, not a reapply on top of an already-patched tree)."""
+    return _hash([(filename, _files_content_hash(component_name, [filename])[filename]) for filename in patches])
 
 
 def component_hash(component, resolved_vars):
@@ -28,12 +49,23 @@ def component_hash(component, resolved_vars):
             "source": {"git": component.source.git, "ref": component.source.ref},
             "command": component.build.command,
             "vars": resolved_vars,
+            "files": _files_content_hash(component.name, component.build.files),
+            "builddeps": sorted(component.build.builddeps),
+            "patches": patches_hash(component.name, component.build.patches),
         }
     )
 
 
 def image_marker_path(workspace, image_name):
     return Path(workspace) / "state" / "images" / f"{image_name}.hash"
+
+
+def builddeps_hash(builddeps):
+    return _hash(sorted(builddeps))
+
+
+def builddeps_marker_path(workspace, image_name, component_name):
+    return Path(workspace) / "state" / "images" / f"{image_name}__{component_name}.builddeps.hash"
 
 
 def component_marker_path(workspace, target_name, component_name):

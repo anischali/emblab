@@ -1,0 +1,9 @@
+name: go
+description: >
+  Go toolchain for building u-root — uses the official golang image
+  directly rather than Debian's often-stale golang-go apt package.
+base_image: docker.io/library/golang:1.23-bookworm
+provision:
+  - apt-get update
+  - apt-get install -y --no-install-recommends git
+env: {}

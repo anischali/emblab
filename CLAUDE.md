@@ -12,5 +12,6 @@
 ## Conventions
 - ADRs at `docs/architecture/decisions/ADR-NNN-slug.md`, structure: Status / Context / Decision / Consequences
 - Manifest YAML lives under `manifests/{images,components,targets}/`, never inline in Python
+- A component manifest lives at `manifests/components/<name>/<name>.yaml`, Yocto-style, with a sibling `files/` dir for that component's own patches and static files (see ADR-007) — images and targets stay flat (`manifests/images/<name>.yaml`, `manifests/targets/<name>.yaml`)
 - `workspace/` is gitignored and disposable; nothing there is source of truth
 - A build command that hasn't been verified against a real clone must say so in a YAML comment (see `barebox.yaml`)

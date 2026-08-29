@@ -1,0 +1,29 @@
+name: linux-kernel
+description: >
+  UNVERIFIED build command. No kernel build invocation was found anywhere
+  in barebox-arm64-poc (matches the same situation barebox.yaml started
+  in). Uses the standard defconfig + Kconfig-fragment-merge pattern
+  (scripts/kconfig/merge_config.sh, shipped in every mainline kernel tree)
+  as a best-effort starting point — see CONTEXT.md's Next section, and see
+  ADR-005 for the build.files/fragments mechanism this demonstrates.
+source:
+  git: https://github.com/torvalds/linux.git
+  ref: master
+  path: linux
+image: gnu-aarch64
+build:
+  files:
+    - tiny.cfg
+  vars:
+    defconfig: defconfig
+    # Space-separated build.files entries to actually merge in — a target
+    # can override this to select a different fragment subset.
+    fragments: tiny.cfg
+  command: >-
+    set -e;
+    make ARCH=${env.ARCH} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig};
+    ./scripts/kconfig/merge_config.sh -m .config ${vars.fragments};
+    make ARCH=${env.ARCH} CROSS_COMPILE=$CROSS_COMPILE olddefconfig;
+    make ARCH=${env.ARCH} CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS} Image
+artifacts:
+  image: arch/arm64/boot/Image
