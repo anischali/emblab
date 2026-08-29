@@ -71,6 +71,56 @@ def test_build_plan_renders_verbatim_tfa_command(tmp_path, monkeypatch):
     assert rendered == expected
 
 
+def test_build_plan_secureboot_uboot_omits_arm_linux_kernel_as_bl33(tmp_path, monkeypatch):
+    """qemu-arm64-secureboot-uboot overrides tf-a's bl33_flags to "" since
+    u-boot is a real bootloader (its own BL33), unlike barebox's EFI-mode
+    build which TF-A loads as a raw kernel/EFI payload via
+    ARM_LINUX_KERNEL_AS_BL33=1 in the plain qemu-arm64-secureboot target."""
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+
+    target_name = "qemu-arm64-secureboot-uboot"
+    target = manifests.load_target(target_name)
+    for entry in target.stack:
+        component = manifests.load_component(entry.component)
+        _precreate_source_and_artifacts(tmp_path, component)
+
+    recorded = []
+
+    def fake_ensure_source(workspace, component, **kwargs):
+        return Path(workspace) / "src" / component.source.path
+
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+        recorded.append((image.name, command))
+
+    with patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
+         patch("emblab.build.containers.ensure_image", return_value=None), \
+         patch("emblab.build.containers.run", side_effect=fake_run):
+        artifacts = build_mod.build(target_name, tmp_path)
+
+    assert set(artifacts) == {"optee-os", "u-boot", "tf-a"}
+
+    tfa_cmds = [cmd[-1] for _, cmd in recorded if "GENERATE_COT" in cmd[-1]]
+    assert len(tfa_cmds) == 1
+    rendered = tfa_cmds[0]
+
+    assert "ARM_LINUX_KERNEL_AS_BL33" not in rendered
+
+    artifacts_root = str(tmp_path / "artifacts" / target_name)
+    expected = (
+        "make -j4 CROSS_COMPILE=aarch64-linux-gnu- PLAT=qemu DEBUG=1 -B "
+        "RESET_TO_BL31=1 LOG_LEVEL=30 "
+        f"BL32={artifacts_root}/optee-os/tee-header "
+        f"BL32_EXTRA1={artifacts_root}/optee-os/tee-pager "
+        f"BL32_EXTRA2={artifacts_root}/optee-os/tee-pageable "
+        "BL32_RAM_LOCATION=tdram SPD=opteed GENERATE_COT=1 all fip "
+        # bl33_flags="" between two literal spaces in tf-a.yaml's command ->
+        # a double space here, same latent (harmless for make) behavior
+        # bl32_flags="" already has whenever a target leaves it unset.
+        f" BL33={artifacts_root}/u-boot/bin"
+    )
+    assert rendered == expected
+
+
 def test_build_plan_skips_unchanged_component_on_second_run(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "cpu_count", lambda: 4)
 

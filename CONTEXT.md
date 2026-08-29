@@ -72,6 +72,18 @@ Yocto-style per-component directory layout
   `git apply --check` confirmed clean against the real
   `workspace/src/optee-os` clone already present. **Not yet re-attempted**
   as a full `emblab build qemu-arm64-secureboot` — see Next.
+- 2026-08-29: New `qemu-arm64-secureboot-uboot` target — same TF-A+OP-TEE
+  stack as `qemu-arm64-secureboot`, `u-boot` as BL33 instead of `barebox`.
+  Required generalizing `tf-a.yaml`'s previously-hardcoded
+  `ARM_LINUX_KERNEL_AS_BL33=1` into a conditionally-populated `bl33_flags`
+  var (same trick as `bl32_flags`) — that flag is correct for barebox's
+  EFI-mode build (TF-A loads it as a raw kernel/EFI payload) but wrong for
+  a real bootloader BL33 like u-boot, which needs it entirely absent, not
+  present-with-0. `u-boot.yaml` hardcodes `ARCH=arm` (not `${env.ARCH}`,
+  which would resolve to `arm64`) — u-boot keeps one `arch/arm/` Kbuild
+  tree for both AArch32/AArch64, same arch-naming mismatch already hit for
+  OP-TEE. **Both `u-boot.yaml` and this target are UNVERIFIED** — offline
+  dry-run only (`pytest`), no real build attempted yet.
 
 ## In progress
 Nothing in flight.
@@ -91,7 +103,12 @@ Nothing in flight.
 4. `emblab build qemu-arm64-fit` — `linux-kernel` and `fit-image`'s
    `mkimage` invocation are both still UNVERIFIED against a real kernel
    tree; `uroot-ramdisk` likewise unverified against real u-root.
-5. If a second target architecture is attempted (see Open questions),
+5. `emblab build qemu-arm64-secureboot-uboot` — `u-boot.yaml`'s
+   `qemu_arm64_defconfig` build command is UNVERIFIED against a real
+   clone, same starting point `barebox.yaml`/`linux-kernel.yaml` began
+   from; validate after `qemu-arm64-secureboot` itself is confirmed
+   working, since they share `optee-os`/`tf-a`.
+6. If a second target architecture is attempted (see Open questions),
    revisit `uroot-ramdisk.yaml`'s hardcoded `GOARCH=arm64` — ADR-006
    deliberately left it hardcoded rather than wiring it to `$ARCH`, since
    Go's arch names don't always match Linux kernel `ARCH=` names and that

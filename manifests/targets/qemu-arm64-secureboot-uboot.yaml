@@ -1,0 +1,46 @@
+name: qemu-arm64-secureboot-uboot
+description: >
+  Same TF-A BL1/BL2/BL31 + OP-TEE BL32 stack as qemu-arm64-secureboot, but
+  with u-boot as BL33 instead of barebox — demonstrates tf-a's bl33_flags
+  override for a real-bootloader BL33 (u-boot is its own BL33, unlike
+  barebox's EFI-mode build which TF-A loads as a raw kernel/EFI payload
+  via ARM_LINUX_KERNEL_AS_BL33=1; see tf-a.yaml). QEMU args copied from
+  qemu-arm64-secureboot unchanged — the boot chain up through BL31/BL32
+  is identical, only BL33 differs.
+arch: arm64
+stack:
+  - component: optee-os
+    vars:
+      platform: vexpress-qemu_armv8a
+  - component: u-boot
+    vars: {}
+  - component: tf-a
+    vars:
+      plat: qemu
+      bl32_flags: >-
+        BL32=${optee-os.tee-header} BL32_EXTRA1=${optee-os.tee-pager} BL32_EXTRA2=${optee-os.tee-pageable}
+      bl33_flags: ""
+      bl33: ${u-boot.bin}
+qemu:
+  binary: qemu-system-aarch64
+  args:
+    - "-cpu"
+    - "cortex-a57"
+    - "-M"
+    - "virt,secure=on"
+    - "-m"
+    - "1G"
+    - "-serial"
+    - "mon:stdio"
+    - "-serial"
+    - "file:${env.WORKSPACE}/artifacts/qemu-arm64-secureboot-uboot/optee.log"
+    - "-device"
+    - "virtio-rng-pci"
+    - "-device"
+    - "ramfb"
+    - "-semihosting-config"
+    - "enable=on,target=native"
+    - "-device"
+    - "sdhci-pci,id=sdhci0"
+    - "-bios"
+    - "${tf-a.qemu_fw}"

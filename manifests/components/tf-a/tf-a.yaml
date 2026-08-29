@@ -20,13 +20,21 @@ build:
     # not present-with-empty-value, so a single conditionally-populated var
     # is the minimal way to express that.
     bl32_flags: ""
+    # ARM_LINUX_KERNEL_AS_BL33=1 by default — barebox-arm64-poc's proven
+    # invocation this command was transcribed from always set it, since it
+    # loads BL33 as a raw kernel/EFI payload rather than a real bootloader
+    # image (correct for barebox's EFI-mode build). A real bootloader BL33
+    # (u-boot, say) is its own BL33 and needs this flag entirely ABSENT, not
+    # set to 0 — same conditionally-populated-var trick as bl32_flags: a
+    # target overrides bl33_flags to "" for that case.
+    bl33_flags: "ARM_LINUX_KERNEL_AS_BL33=1"
     bl33: ""
   command: >-
     make -j${env.JOBS} CROSS_COMPILE=aarch64-linux-gnu- PLAT=${vars.plat} DEBUG=1 -B
     RESET_TO_BL31=1 LOG_LEVEL=30
     ${vars.bl32_flags}
     BL32_RAM_LOCATION=tdram SPD=opteed GENERATE_COT=1 all fip
-    ARM_LINUX_KERNEL_AS_BL33=1 BL33=${vars.bl33}
+    ${vars.bl33_flags} BL33=${vars.bl33}
 artifacts:
   bl1: build/qemu/debug/bl1.bin
   fip: build/qemu/debug/fip.bin
