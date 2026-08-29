@@ -200,6 +200,30 @@ forking the component or affecting targets that don't want it.
   `pip install -e ".[dev]"` now completes in ~4.5s against a checkout with
   a fully-populated `workspace/`; `emblab list` and `pytest tests/`
   (63/63) both still pass.
+- 2026-08-29: **`qemu-riscv64-opensbi-barebox` — first riscv64 target,
+  built AND booted for real**, resolving the "which arch/bootstack next"
+  Open question with OpenSBI+barebox instead of the originally-guessed
+  OpenSBI+U-Boot. New `opensbi` component (PLATFORM=generic, no
+  arch-flavored vars needed — unlike edk2/barebox/u-boot, OpenSBI is
+  inherently riscv-only) and `gnu-riscv64` image (mirrors `gnu-aarch64`'s
+  package set with the riscv64 cross toolchain) both worked first try.
+  Two real bugs surfaced and fixed along the way, both in how the target
+  picked barebox's output rather than in barebox/opensbi themselves:
+  (1) first attempt pointed `-kernel` at a freshly-added `vars.image_path`
+  (`barebox.bin`, later `vmbarebox`) — QEMU's ELF loader took
+  `vmbarebox`'s addresses literally (`CONFIG_RELOCATABLE=y`, `p_vaddr`
+  starting at 0x0) and refused to start, colliding with the boot ROM;
+  (2) realized `${barebox.images}/barebox-dt-2nd.img` — the SAME artifact
+  key the arm64 targets already use — was the right file all along:
+  riscv64's `CONFIG_SOC_VIRT` selects the arch-agnostic `BOARD_GENERIC_DT`
+  Kconfig option that produces it (its own help text says so verbatim),
+  so no barebox.yaml changes were needed at all in the end. Confirmed with
+  `file`: a real "Linux kernel RISC-V boot executable Image". Full real
+  boot: QEMU -> OpenSBI M-mode (prints its real banner, HART/domain info)
+  -> S-mode handoff at 0x80200000 -> barebox 2026.08.0 reaches an
+  interactive `barebox@riscv-virtio,qemu:/` shell prompt on serial ("Nothing
+  bootable found" after that is expected — no OS/rootfs is wired up, the
+  bootloader chain itself is what this target proves). 63/63 tests pass.
 
 ## In progress
 Nothing in flight.
@@ -239,23 +263,27 @@ Nothing in flight.
    some way real *booting* surfaces (as opposed to building, already
    clean), fix `manifests/components/edk2/files/0001-fvbootdxe-bundle-app.patch`
    directly rather than re-deriving it from the upstream POC again.
-8. If a second target architecture is attempted (see Open questions), it's
-   now just a matter of adding a new target manifest with the right
-   `vars.arch`/`vars.goarch`/`vars.edk2_arch` values per stack entry
-   (ADR-009) — no component edits needed, that was the whole point.
+8. A second riscv64 bootstack (e.g. U-Boot instead of/alongside barebox)
+   or a second architecture entirely — `qemu-riscv64-opensbi-barebox`
+   proved the pattern generalizes cleanly: a new image + component (if the
+   arch needs one not covered by an existing component) + target manifest,
+   no changes needed to already-shared components (ADR-009's whole point).
 
 ## Open questions
-- Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox` once a
-  known-good combination is found — all three currently pin `ref: master`
-  (barebox's proven build above was still against `master`), which is
-  intentionally provisional.
+- Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox`,
+  `opensbi` once a known-good combination is found — all currently pin
+  `ref: master` (barebox's and opensbi's proven builds above were still
+  against `master`), which is intentionally provisional.
 - Once refs are pinned to exact commits (not branches), `sources.py`'s
   `git clone --branch <ref>` will need to change to `git fetch <url> <sha>
   && git checkout FETCH_HEAD`, since most git servers don't advertise
   arbitrary commits for a shallow branch clone.
-- Which architecture/bootstack combination to add next after the two arm64
-  seed targets are validated (riscv64+OpenSBI+U-Boot is a natural
-  candidate — qemu-system-riscv64 is already installed on this machine).
+- ~~Which architecture/bootstack combination to add next~~ — resolved:
+  `qemu-riscv64-opensbi-barebox` (OpenSBI+barebox, not U-Boot as originally
+  guessed) is built AND booted for real, see Proven. A riscv64+U-Boot
+  target is still a natural follow-up if a second riscv64 bootstack is
+  wanted later (u-boot.yaml already exists for arm64 — would need its own
+  riscv64 defconfig/vars, same shape as barebox's above).
 
 ## Environment notes
 - `python3` 3.14.6, no `uv`/`poetry`/`hatch` — `pip` (via venv) only.

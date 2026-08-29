@@ -1,0 +1,21 @@
+name: opensbi
+description: >
+  UNVERIFIED build command. RISC-V M-mode firmware (BL2-equivalent to
+  TF-A's role on arm64) — the "generic" platform auto-detects the board
+  from the FDT QEMU's virt machine provides, so unlike tf-a.yaml's PLAT=qemu
+  this needs no per-target platform var. Builds fw_jump.bin: OpenSBI jumps
+  to a fixed address (FW_JUMP_ADDR, generic platform default 0x80200000 —
+  matches where QEMU's virt machine loads a raw -kernel image) rather than
+  embedding a payload itself, so a target's own bootloader (barebox) stays
+  a separate -kernel, chain-loaded exactly like tf-a+barebox on arm64.
+source:
+  git: https://github.com/riscv-software-src/opensbi.git
+  ref: master
+  path: opensbi
+build:
+  vars:
+    plat: generic
+  command: >-
+    make -j${env.JOBS} PLATFORM=${vars.plat} CROSS_COMPILE=$CROSS_COMPILE
+artifacts:
+  fw_jump: build/platform/${vars.plat}/firmware/fw_jump.bin

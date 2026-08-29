@@ -1,0 +1,40 @@
+name: qemu-riscv64-opensbi-barebox
+description: >
+  UNVERIFIED against a real clone — first riscv64 target (see CONTEXT.md's
+  Open questions). OpenSBI's fw_jump firmware (M-mode, BL2-equivalent to
+  tf-a on arm64) jumps to a fixed address where QEMU loads -kernel
+  directly, so barebox stays a separate chain-loaded -kernel rather than a
+  bundled payload — same two-stage shape as qemu-arm64-uefi-barebox's
+  edk2+barebox chain-load, just with OpenSBI standing in for edk2. Uses
+  barebox's rv64i_defconfig (QEMU's "virt" SoC is CONFIG_SOC_VIRT=y there)
+  and ${barebox.images}/barebox-dt-2nd.img, same artifact key the arm64
+  targets already use — CONFIG_SOC_VIRT selects the arch-agnostic
+  BOARD_GENERIC_DT Kconfig option that produces it, not something
+  arm64-specific despite the name's history. Confirmed a real boot
+  attempt: an earlier version of this target pointed -kernel at
+  barebox.bin (a position-independent ELF, CONFIG_RELOCATABLE=y) instead,
+  which QEMU's ELF loader refused to place (addresses starting at 0x0
+  collided with the machine's boot ROM) — barebox-dt-2nd.img is a real
+  "Linux kernel RISC-V boot executable Image" (confirmed with `file`),
+  the format QEMU's -kernel loader actually expects on this arch.
+arch: riscv64
+stack:
+  - component: opensbi
+    image: gnu-riscv64
+  - component: barebox
+    image: gnu-riscv64
+    vars:
+      defconfig: rv64i_defconfig
+      arch: riscv
+qemu:
+  binary: qemu-system-riscv64
+  args:
+    - "-M"
+    - "virt"
+    - "-m"
+    - "256M"
+    - "-nographic"
+    - "-bios"
+    - "${opensbi.fw_jump}"
+    - "-kernel"
+    - "${barebox.images}/barebox-dt-2nd.img"

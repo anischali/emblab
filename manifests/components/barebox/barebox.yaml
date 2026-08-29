@@ -9,6 +9,10 @@ description: >
   itself never invoked a barebox `make`/defconfig step directly — only its
   *output path* is transcribed from there, as
   ../barebox/images/barebox-dt-2nd.img in build.sh's BL33= argument.
+  barebox-dt-2nd.img isn't arm64-specific despite the transcription
+  history above — it's produced by the arch-agnostic BOARD_GENERIC_DT
+  Kconfig option (riscv64's CONFIG_SOC_VIRT selects it too, its own help
+  text says so verbatim: "Generates an image that can be booted by QEMU").
 source:
   git: https://github.com/barebox/barebox
   ref: master

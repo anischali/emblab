@@ -1,0 +1,16 @@
+name: gnu-riscv64
+description: >
+  riscv64 GNU cross toolchain, plus barebox/OpenSBI build dependencies.
+  Provisioned via udocker pull+create+run (see ADR-004 — never via
+  udocker's Dockerfile-subset builder). Mirrors gnu-aarch64.yaml's package
+  set, swapped to the riscv64 cross toolchain.
+base_image: docker.io/library/debian:bookworm-slim
+provision:
+  - apt-get update
+  - >-
+    apt-get install -y --no-install-recommends
+    build-essential git python3 python3-pip device-tree-compiler bison flex
+    libssl-dev pkg-config bc rsync unzip lz4 gcc-riscv64-linux-gnu
+    g++-riscv64-linux-gnu
+env:
+  CROSS_COMPILE: riscv64-linux-gnu-
