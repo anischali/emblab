@@ -30,6 +30,13 @@ stack:
       - 0001-fvbootdxe-bundle-app.patch
     vars:
       edk2_arch: AARCH64
+      # EDK2's BaseTools -a flag and GCC_<ARCH>_PREFIX env var need the
+      # uppercase spelling above, but the Build/<platform>-<arch> output
+      # directory EDK2 actually creates uses its own differently-cased
+      # "friendly" arch name (confirmed against a real build) — a separate
+      # var since there's no string-transform in emblab's templating to
+      # derive one from the other.
+      edk2_build_arch: AArch64
       # barebox's efi_v8_defconfig output *is* a PE32 EFI application
       # (barebox.efi is a build-time symlink to this same file) — see
       # edk2.yaml's vars.fv_boot_app_flag comment.

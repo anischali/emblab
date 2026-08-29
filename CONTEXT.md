@@ -164,6 +164,27 @@ forking the component or affecting targets that don't want it.
   **The hand-reconstructed patch is UNVERIFIED against a real build** —
   `git apply --check` only proves it applies; it doesn't prove the
   resulting firmware builds or actually boots `barebox` via `FvBootDxe`.
+- 2026-08-29: **`emblab build qemu-arm64-edk2-fvbootdxe-barebox` succeeded
+  for real**, surfacing and fixing two bugs in `edk2.yaml` — both are
+  upstream `edk2` `master` drift (this component's `ref: master` is
+  intentionally floating, see Open questions), unrelated to the
+  hand-reconstructed `FvBootDxe` patch itself, which applied and built
+  clean: (1) upstream dropped the legacy `GCC5` toolchain tag
+  (`Conf/tools_def.txt` now only defines `GCC`/`GCCNOLTO`/etc, with
+  `ENV(GCC_AARCH64_PREFIX)` not `GCC5_AARCH64_PREFIX`) — fixed by changing
+  `-t GCC5`/`GCC5_${vars.edk2_arch}_PREFIX`/`DEBUG_GCC5` to
+  `GCC`/`GCC_${vars.edk2_arch}_PREFIX`/`DEBUG_GCC`; (2) EDK2's own
+  `Build/<platform>-<arch>` output directory uses a differently-cased
+  "friendly" arch name (`AArch64`) than the `-a` flag/env-var spelling
+  (`AARCH64`) — confirmed against the real build directory, not documented
+  anywhere obvious in EDK2 itself — fixed by adding a second explicit var,
+  `vars.edk2_build_arch`, set by both edk2 targets' stack entries
+  alongside `edk2_arch`, and pointing `artifacts.fd` at it instead. Real
+  build: 9 minutes for the full compile, then instant on the artifact-only
+  retry. 63/63 tests still pass. **Still unconfirmed**: `emblab run` this
+  target and see it actually boot `barebox` via `FvBootDxe` with no
+  `-kernel` flag present — the build succeeding only proves the firmware
+  links, not that the embedded-payload boot path works.
 - 2026-08-29: `bootstrap.sh`'s `pip install -e ".[dev]"` was hanging
   indefinitely on this machine once a real build had populated `workspace/`.
   Root cause: `pyproject.toml`'s `[tool.setuptools.packages.find]`
@@ -203,20 +224,21 @@ Nothing in flight.
    clone, same starting point `barebox.yaml`/`linux-kernel.yaml` began
    from; validate after `qemu-arm64-secureboot` itself is confirmed
    working, since they share `optee-os`/`tf-a`.
-6. `emblab build qemu-arm64-edk2-barebox` — `edk2.yaml`'s build command
-   (submodule init + `edksetup.sh`/`BaseTools`/`build -p ArmVirtQemu.dsc`)
-   is UNVERIFIED against a real clone; expect real wall-clock time
-   (CryptoPkg's vendored OpenSSL/mbedTLS submodules are large).
-7. `emblab build qemu-arm64-edk2-fvbootdxe-barebox` — validate this after
-   plain `qemu-arm64-edk2-barebox` builds successfully (shares the same
-   `edk2` build, just with the `FvBootDxe` patch + `FV_BOOT_APP_PATH`
-   added — see ADR-010). If the hand-reconstructed patch turns out wrong
-   in some way real building surfaces, fix
-   `manifests/components/edk2/files/0001-fvbootdxe-bundle-app.patch`
+6. `emblab build qemu-arm64-edk2-barebox` — the plain (non-`FvBootDxe`)
+   edk2 target. `edk2.yaml`'s build command now has a real, working build
+   behind it (see Proven — same component, same `GCC` toolchain fix and
+   `edk2_build_arch` var apply here too), but this exact target hasn't
+   been attempted for real yet; expect real wall-clock time on first build
+   (CryptoPkg's vendored OpenSSL/mbedTLS submodules are large) even though
+   `edk2`'s source is already cloned from the `fvbootdxe` build above.
+7. `emblab run qemu-arm64-edk2-fvbootdxe-barebox` — the build now succeeds
+   for real (see Proven), but confirm it actually boots `barebox` via
+   `FvBootDxe` with NO `-kernel` flag present — that's the real proof
+   `FvBootDxe` is finding and loading the embedded payload, not QEMU doing
+   it a different way. If the hand-reconstructed patch turns out wrong in
+   some way real *booting* surfaces (as opposed to building, already
+   clean), fix `manifests/components/edk2/files/0001-fvbootdxe-bundle-app.patch`
    directly rather than re-deriving it from the upstream POC again.
-   `emblab run` this target and confirm it actually boots barebox with NO
-   `-kernel` flag present — that's the real proof FvBootDxe is finding and
-   loading the embedded payload, not QEMU doing it a different way.
 8. If a second target architecture is attempted (see Open questions), it's
    now just a matter of adding a new target manifest with the right
    `vars.arch`/`vars.goarch`/`vars.edk2_arch` values per stack entry

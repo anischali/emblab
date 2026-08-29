@@ -339,7 +339,7 @@ def test_build_files_content_change_triggers_rebuild(tmp_path, monkeypatch):
 def test_artifacts_path_resolves_vars_and_env_tokens(tmp_path, monkeypatch):
     """A declared artifacts: path can use ${vars.X}/${env.X} tokens, resolved
     the same way build.command already is — needed for e.g. edk2.yaml's
-    Build/${vars.platform}-${vars.edk2_arch}/... output path."""
+    Build/${vars.platform}-${vars.edk2_build_arch}/... output path."""
     monkeypatch.setattr(os, "cpu_count", lambda: 4)
 
     manifests_dir = tmp_path / "manifests"

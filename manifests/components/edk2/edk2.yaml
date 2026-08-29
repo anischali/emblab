@@ -27,11 +27,15 @@ source:
   # CryptoPkg components, so a build without these fails.
   submodules: true
 build:
-  # vars.edk2_arch has no default here — arch is a target concern, not a
-  # component one (see ADR-009); every target's stack entry for edk2 must
-  # set it (EDK2's own BaseTools -a flag / GCC5_<ARCH>_PREFIX env var name
-  # spelling, e.g. "AARCH64" — not ${env.ARCH}, which would resolve to the
-  # differently-spelled "arm64").
+  # vars.edk2_arch and vars.edk2_build_arch have no default here — arch is
+  # a target concern, not a component one (see ADR-009); every target's
+  # stack entry for edk2 must set both: edk2_arch for EDK2's own BaseTools
+  # -a flag / GCC_<ARCH>_PREFIX env var name spelling (e.g. "AARCH64" — not
+  # ${env.ARCH}, which would resolve to the differently-spelled "arm64"),
+  # and edk2_build_arch for the differently-cased "friendly" arch name
+  # EDK2's own Build/<platform>-<arch> output directory uses (e.g.
+  # "AArch64" — confirmed against a real build, not documented anywhere
+  # obvious in EDK2 itself).
   vars:
     platform: ArmVirtQemu
     platform_path: ArmVirtPkg
@@ -48,10 +52,13 @@ build:
   command: >-
     set -e;
     export PACKAGES_PATH=$PWD;
-    export GCC5_${vars.edk2_arch}_PREFIX=$CROSS_COMPILE;
+    export GCC_${vars.edk2_arch}_PREFIX=$CROSS_COMPILE;
     pip3 install --break-system-packages -r pip-requirements.txt;
     . ./edksetup.sh;
     make -C BaseTools;
-    build -a ${vars.edk2_arch} -t GCC5 -b DEBUG -p ${vars.platform_path}/${vars.platform}.dsc ${vars.fv_boot_app_flag}
+    build -a ${vars.edk2_arch} -t GCC -b DEBUG -p ${vars.platform_path}/${vars.platform}.dsc ${vars.fv_boot_app_flag}
 artifacts:
-  fd: Build/${vars.platform}-${vars.edk2_arch}/DEBUG_GCC5/FV/QEMU_EFI.fd
+  # ${vars.edk2_build_arch}, not ${vars.edk2_arch} — EDK2's Build output
+  # directory uses its own differently-cased "friendly" arch name (e.g.
+  # "AArch64"), not the uppercase spelling the -a flag/env var need.
+  fd: Build/${vars.platform}-${vars.edk2_build_arch}/DEBUG_GCC/FV/QEMU_EFI.fd

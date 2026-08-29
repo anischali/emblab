@@ -25,6 +25,10 @@ stack:
       - cmake
     vars:
       edk2_arch: AARCH64
+      # See qemu-arm64-edk2-fvbootdxe-barebox.yaml's comment: EDK2's own
+      # Build/<platform>-<arch> output directory uses a differently-cased
+      # "friendly" arch name than the -a flag/env var spelling above.
+      edk2_build_arch: AArch64
   - component: barebox
     image: gnu-aarch64
     vars:
