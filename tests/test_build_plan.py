@@ -51,7 +51,7 @@ def test_build_plan_renders_verbatim_tfa_command(tmp_path, monkeypatch):
 
     recorded = []
 
-    def fake_ensure_source(workspace, component, **kwargs):
+    def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
     def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
@@ -97,7 +97,7 @@ def test_build_plan_secureboot_uboot_omits_arm_linux_kernel_as_bl33(tmp_path, mo
 
     recorded = []
 
-    def fake_ensure_source(workspace, component, **kwargs):
+    def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
     def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
@@ -143,7 +143,7 @@ def test_build_plan_skips_unchanged_component_on_second_run(tmp_path, monkeypatc
 
     run_calls = []
 
-    def fake_ensure_source(workspace, component, **kwargs):
+    def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
     def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
@@ -172,7 +172,7 @@ def test_build_plan_fit_target_resolves_kernel_and_ramdisk_and_copies_its(tmp_pa
 
     recorded = []
 
-    def fake_ensure_source(workspace, component, **kwargs):
+    def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
     def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
@@ -217,7 +217,7 @@ def test_build_plan_edk2_barebox_target_resolves_bios_kernel_paths(tmp_path, mon
         component = manifests.load_component(entry.component)
         _precreate_source_and_artifacts(tmp_path, component, entry)
 
-    def fake_ensure_source(workspace, component, **kwargs):
+    def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
     with patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
@@ -233,6 +233,56 @@ def test_build_plan_edk2_barebox_target_resolves_bios_kernel_paths(tmp_path, mon
     kernel_index = args.index("-kernel") + 1
     assert args[bios_index] == f"{artifacts_root}/edk2/fd"
     assert args[kernel_index] == f"{artifacts_root}/barebox/images/barebox-dt-2nd.img"
+
+
+def test_build_plan_edk2_fvbootdxe_barebox_bundles_via_patch_and_flag(tmp_path, monkeypatch):
+    """qemu-arm64-edk2-fvbootdxe-barebox opts edk2's stack entry into the
+    FvBootDxe patch (ADR-010) and sets FV_BOOT_APP_PATH to barebox's own
+    output — verifies barebox builds before edk2 (dependency detected via
+    the ${barebox.images} token in edk2's vars, same mechanism as any other
+    cross-component reference), the patch reaches sources.ensure_source
+    merged with edk2's own (empty) build.patches, and the rendered edk2
+    build command contains the resolved -D FV_BOOT_APP_PATH flag. No
+    -kernel needed — this target's qemu args are -bios only."""
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+
+    target_name = "qemu-arm64-edk2-fvbootdxe-barebox"
+    target = manifests.load_target(target_name)
+    for entry in target.stack:
+        component = manifests.load_component(entry.component)
+        _precreate_source_and_artifacts(tmp_path, component, entry)
+
+    build_order = []
+    recorded_patches = {}
+    recorded_cmds = {}
+
+    def fake_ensure_source(workspace, component, patches, **kwargs):
+        build_order.append(component.name)
+        recorded_patches[component.name] = patches
+        return Path(workspace) / "src" / component.source.path
+
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+        recorded_cmds[workdir.rsplit("/", 1)[-1]] = command[-1]
+
+    with patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
+         patch("emblab.build.containers.ensure_image", return_value=None), \
+         patch("emblab.build.containers.run", side_effect=fake_run):
+        artifacts = build_mod.build(target_name, tmp_path)
+
+    assert set(artifacts) == {"barebox", "edk2"}
+    assert build_order.index("barebox") < build_order.index("edk2")  # dependency order
+
+    assert recorded_patches["edk2"] == ["0001-fvbootdxe-bundle-app.patch"]
+
+    artifacts_root = str(tmp_path / "artifacts" / target_name)
+    edk2_cmd = recorded_cmds["edk2"]
+    assert (
+        f"-D FV_BOOT_APP_PATH={artifacts_root}/barebox/images/barebox-dt-2nd.img" in edk2_cmd
+    )
+
+    args = qemu_mod.resolve_args(target, tmp_path)
+    assert args[args.index("-bios") + 1] == f"{artifacts_root}/edk2/fd"
+    assert "-kernel" not in args
 
 
 def test_build_files_content_change_triggers_rebuild(tmp_path, monkeypatch):
@@ -255,7 +305,7 @@ def test_build_files_content_change_triggers_rebuild(tmp_path, monkeypatch):
         name="frag-target",
         description="",
         arch="fake",
-        stack=[manifests.StackEntry(component="frag", vars={}, image="img", builddeps=[])],
+        stack=[manifests.StackEntry(component="frag", vars={}, image="img", builddeps=[], patches=[])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
@@ -264,7 +314,7 @@ def test_build_files_content_change_triggers_rebuild(tmp_path, monkeypatch):
 
     run_calls = []
 
-    def fake_ensure_source(workspace, component, **kwargs):
+    def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
     def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
@@ -306,7 +356,7 @@ def test_artifacts_path_resolves_vars_and_env_tokens(tmp_path, monkeypatch):
         name="templated-artifact-target",
         description="",
         arch="riscv64",
-        stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[])],
+        stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[], patches=[])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
@@ -315,7 +365,7 @@ def test_artifacts_path_resolves_vars_and_env_tokens(tmp_path, monkeypatch):
     (src_dir / "Build" / "ArmVirtQemu-riscv64").mkdir(parents=True)
     (src_dir / "Build" / "ArmVirtQemu-riscv64" / "out.txt").write_bytes(b"fake")
 
-    def fake_ensure_source(workspace, component, **kwargs):
+    def fake_ensure_source(workspace, component, patches, **kwargs):
         return src_dir
 
     with patch("emblab.build.manifests.load_target", return_value=target), \
@@ -344,7 +394,7 @@ def test_directory_artifact_copied_recursively(tmp_path, monkeypatch):
         name="dirart-target",
         description="",
         arch="fake",
-        stack=[manifests.StackEntry(component="dirart", vars={}, image="img", builddeps=[])],
+        stack=[manifests.StackEntry(component="dirart", vars={}, image="img", builddeps=[], patches=[])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
@@ -354,7 +404,7 @@ def test_directory_artifact_copied_recursively(tmp_path, monkeypatch):
     (src_dir / "outdir" / "top-file").write_bytes(b"top")
     (src_dir / "outdir" / "nested" / "deep-file").write_bytes(b"deep")
 
-    def fake_ensure_source(workspace, component, **kwargs):
+    def fake_ensure_source(workspace, component, patches, **kwargs):
         return src_dir
 
     with patch("emblab.build.manifests.load_target", return_value=target), \
@@ -385,7 +435,7 @@ def test_builddeps_installed_once_then_skipped_on_rebuild(tmp_path, monkeypatch)
         name="deps-target",
         description="",
         arch="fake",
-        stack=[manifests.StackEntry(component="deps", vars={}, image="img", builddeps=["foo-tool"])],
+        stack=[manifests.StackEntry(component="deps", vars={}, image="img", builddeps=["foo-tool"], patches=[])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
@@ -394,7 +444,7 @@ def test_builddeps_installed_once_then_skipped_on_rebuild(tmp_path, monkeypatch)
 
     run_calls = []
 
-    def fake_ensure_source(workspace, component, **kwargs):
+    def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
     def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
@@ -414,6 +464,50 @@ def test_builddeps_installed_once_then_skipped_on_rebuild(tmp_path, monkeypatch)
     assert "apt-get install" in apt_calls_first[0][-1]
     # unchanged builddeps -> not reinstalled on the forced rebuild
     assert len(apt_calls_second) == len(apt_calls_first)
+
+
+def test_stack_entry_patches_are_target_specific_extras_on_top_of_components_own(tmp_path, monkeypatch):
+    """ADR-010: a target's stack-entry patches are extra, on top of whatever
+    the component always applies via build.patches — not a replacement."""
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+
+    manifests_dir = tmp_path / "manifests"
+    (manifests_dir / "images").mkdir(parents=True)
+    (manifests_dir / "components" / "comp" / "files").mkdir(parents=True)
+    (manifests_dir / "images" / "img.yaml").write_text("base_image: x\nprovision: []\n")
+    (manifests_dir / "components" / "comp" / "files" / "0001-base.patch").write_text("base\n")
+    (manifests_dir / "components" / "comp" / "files" / "0002-target-extra.patch").write_text("extra\n")
+    (manifests_dir / "components" / "comp" / "comp.yaml").write_text(
+        "source:\n  git: x\n  ref: main\n"
+        "build:\n  vars: {}\n  command: echo hi\n  patches:\n    - 0001-base.patch\n"
+        "artifacts:\n  out: out.txt\n"
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+
+    target = manifests.Target(
+        name="extra-patch-target",
+        description="",
+        arch="fake",
+        stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[], patches=["0002-target-extra.patch"])],
+        qemu=manifests.Qemu(binary="true", args=[]),
+    )
+
+    component = manifests.load_component("comp")
+    _precreate_source_and_artifacts(tmp_path, component)
+
+    received_patches = []
+
+    def fake_ensure_source(workspace, component, patches, **kwargs):
+        received_patches.append(patches)
+        return Path(workspace) / "src" / component.source.path
+
+    with patch("emblab.build.manifests.load_target", return_value=target), \
+         patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
+         patch("emblab.build.containers.ensure_image", return_value=None), \
+         patch("emblab.build.containers.run", return_value=None):
+        build_mod.build("extra-patch-target", tmp_path)
+
+    assert received_patches == [["0001-base.patch", "0002-target-extra.patch"]]
 
 
 def test_stack_entry_image_is_used_for_build(tmp_path, monkeypatch):
@@ -437,7 +531,7 @@ def test_stack_entry_image_is_used_for_build(tmp_path, monkeypatch):
         name="picks-image-target",
         description="",
         arch="fake",
-        stack=[manifests.StackEntry(component="comp", vars={}, image="img-b", builddeps=[])],
+        stack=[manifests.StackEntry(component="comp", vars={}, image="img-b", builddeps=[], patches=[])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
@@ -446,7 +540,7 @@ def test_stack_entry_image_is_used_for_build(tmp_path, monkeypatch):
 
     ensured_images = []
 
-    def fake_ensure_source(workspace, component, **kwargs):
+    def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
     def fake_ensure_image(image, workspace, log=print):
@@ -478,7 +572,7 @@ def test_target_arch_resolves_as_env_arch_template_token(tmp_path, monkeypatch):
         name="arch-target",
         description="",
         arch="riscv64",
-        stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[])],
+        stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[], patches=[])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
@@ -487,7 +581,7 @@ def test_target_arch_resolves_as_env_arch_template_token(tmp_path, monkeypatch):
 
     recorded = []
 
-    def fake_ensure_source(workspace, component, **kwargs):
+    def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
     def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
@@ -531,7 +625,7 @@ def test_component_not_referencing_env_arch_is_structurally_unaffected(tmp_path,
         name="no-arch-target",
         description="",
         arch="riscv64",
-        stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[])],
+        stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[], patches=[])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
@@ -540,7 +634,7 @@ def test_component_not_referencing_env_arch_is_structurally_unaffected(tmp_path,
 
     recorded = []
 
-    def fake_ensure_source(workspace, component, **kwargs):
+    def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
     def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
@@ -579,14 +673,14 @@ def test_component_arch_var_with_no_default_requires_target_to_set_it(tmp_path, 
         name="forgot-arch-target",
         description="",
         arch="riscv64",
-        stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[])],
+        stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[], patches=[])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
     component = manifests.load_component("comp")
     _precreate_source_and_artifacts(tmp_path, component)
 
-    def fake_ensure_source(workspace, component, **kwargs):
+    def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
     with patch("emblab.build.manifests.load_target", return_value=target), \

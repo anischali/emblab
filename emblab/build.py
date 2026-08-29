@@ -38,14 +38,19 @@ def build(target_name, workspace, *, force=False, only=None, log=print):
         entry = entries_by_component[component_name]
         image = manifests.load_image(entry.image)
 
+        # entry.patches are target-specific extras on top of the component's
+        # own always-applied build.patches — e.g. edk2's FvBootDxe bundling
+        # patch, only for a target that asks for it (see ADR-010).
+        merged_patches = list(component.build.patches) + list(entry.patches)
+
         containers.ensure_image(image, workspace, log=log)
-        src_dir = sources.ensure_source(workspace, component, log=log)
+        src_dir = sources.ensure_source(workspace, component, merged_patches, log=log)
 
         merged_vars = {**component.build.vars, **entry.vars}
         resolved_vars = templating.resolve_vars(merged_vars, env=env, artifacts=artifacts_by_component)
 
         marker_path = state.component_marker_path(workspace, target.name, component_name)
-        current_hash = state.component_hash(component, resolved_vars, entry.builddeps)
+        current_hash = state.component_hash(component, resolved_vars, entry.builddeps, merged_patches)
         have_artifacts = state.artifacts_exist(workspace, target.name, component_name, component.artifacts)
 
         if not force and have_artifacts and state.marker_matches(marker_path, current_hash):

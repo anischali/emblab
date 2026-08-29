@@ -1,0 +1,53 @@
+name: qemu-arm64-edk2-fvbootdxe-barebox
+description: >
+  A real bundled boot: barebox is embedded INSIDE the edk2 firmware volume
+  via the FvBootDxe driver (https://codeberg.org/anischali/FvBootDxe),
+  unlike qemu-arm64-edk2-barebox which chain-loads them as two separate
+  QEMU-loaded things. edk2's stack entry opts into
+  files/0001-fvbootdxe-bundle-app.patch (a target-specific extra patch,
+  see ADR-010 — NOT part of edk2's own build.patches, so
+  qemu-arm64-edk2-barebox is unaffected) and sets fv_boot_app_flag to
+  point EDK2's build at barebox's own EFI application output. QEMU only
+  needs -bios: FvBootDxe finds barebox by GUID inside the firmware volume
+  and boots it directly, no -kernel needed.
+arch: arm64
+stack:
+  - component: barebox
+    image: gnu-aarch64
+    vars:
+      defconfig: efi_v8_defconfig
+      arch: arm64
+  - component: edk2
+    image: gnu-aarch64
+    builddeps:
+      - iasl
+      - uuid-dev
+      - cmake
+    # Opts into the FvBootDxe bundling patch — see edk2.yaml's description
+    # and ADR-010. Not part of edk2's own build.patches, so
+    # qemu-arm64-edk2-barebox (no patches: here) never applies it.
+    patches:
+      - 0001-fvbootdxe-bundle-app.patch
+    vars:
+      edk2_arch: AARCH64
+      # barebox's efi_v8_defconfig output *is* a PE32 EFI application
+      # (barebox.efi is a build-time symlink to this same file) — see
+      # edk2.yaml's vars.fv_boot_app_flag comment.
+      fv_boot_app_flag: -D FV_BOOT_APP_PATH=${barebox.images}/barebox-dt-2nd.img
+qemu:
+  binary: qemu-system-aarch64
+  args:
+    - "-cpu"
+    - "cortex-a57"
+    - "-M"
+    - "virt,acpi=off"
+    - "-m"
+    - "1G"
+    - "-serial"
+    - "mon:stdio"
+    - "-device"
+    - "virtio-rng-pci"
+    - "-device"
+    - "ramfb"
+    - "-bios"
+    - "${edk2.fd}"

@@ -20,7 +20,12 @@ component declares no `image:`, no `build.builddeps`, and no default for
 any arch-flavored var (`vars.arch`, `vars.goarch`, `vars.edk2_arch`) —
 every target's stack entry sets all of these explicitly per component.
 `build.builddeps` mentioned in earlier Proven entries below now means
-"the target's stack-entry `builddeps:`", not a component field.
+"the target's stack-entry `builddeps:`", not a component field. ADR-010
+adds the same target-optional layering for patches: a stack entry's own
+`patches:` are extras on top of a component's always-applied
+`build.patches` — used to opt `edk2` into real `FvBootDxe` firmware
+bundling (https://codeberg.org/anischali/FvBootDxe) per-target, without
+forking the component or affecting targets that don't want it.
 
 ## Proven
 - 2026-08-29: `bash bootstrap.sh` — venv + `pip install -e ".[dev]"` +
@@ -132,6 +137,33 @@ every target's stack entry sets all of these explicitly per component.
   `tf-a.yaml`'s hardcoded `CROSS_COMPILE=aarch64-linux-gnu-` was also
   changed to the real `$CROSS_COMPILE` env var, matching every other
   component. All 5 targets + 8 components updated; 57/57 tests pass.
+- 2026-08-29: **ADR-010 / real `FvBootDxe` bundling**: the driver ADR-009
+  found undocumented as code now has real source at
+  https://codeberg.org/anischali/FvBootDxe. Its own reference integration
+  patch doesn't apply cleanly to current `edk2` `master` (upstream moved
+  `BdsDxe.inf` out of `ArmVirtQemu.dsc` into a shared
+  `ArmVirtPkg/ArmVirt.dsc.inc`, dropped a PCD anchor the patch used, and
+  the patch is LF-only against edk2's CRLF files) — reconstructed by hand
+  against a fresh `master` clone instead, verified with `git apply --check`
+  against two independent fresh clones, saved as
+  `manifests/components/edk2/files/0001-fvbootdxe-bundle-app.patch`.
+  Deliberately did NOT carry over the POC's comment-out of `RngDxe.inf` —
+  looked like an unrelated environment workaround, not something
+  `FvBootDxe` needs, and every existing target already expects a working
+  RNG (`-device virtio-rng-pci`). Added `StackEntry.patches` (target-only
+  extras on top of a component's own `build.patches`) so `edk2` can offer
+  this as opt-in per target rather than forcing it on every `edk2` build;
+  `edk2.yaml` gained `vars.fv_boot_app_flag` (empty by default, same
+  conditionally-populated-var trick as `tf-a.yaml`'s `bl32_flags`). New
+  target `qemu-arm64-edk2-fvbootdxe-barebox` demonstrates it: `barebox`'s
+  own `efi_v8_defconfig` output (`barebox-dt-2nd.img`) IS already a PE32
+  EFI application — confirmed against the real build in `workspace/`,
+  where `barebox.efi` is a symlink to that exact file — so no new barebox
+  variant was needed, just pointing `FV_BOOT_APP_PATH` at the same
+  artifact `qemu-arm64-uefi-barebox` already uses. 63/63 tests pass.
+  **The hand-reconstructed patch is UNVERIFIED against a real build** —
+  `git apply --check` only proves it applies; it doesn't prove the
+  resulting firmware builds or actually boots `barebox` via `FvBootDxe`.
 
 ## In progress
 Nothing in flight.
@@ -160,10 +192,17 @@ Nothing in flight.
    (submodule init + `edksetup.sh`/`BaseTools`/`build -p ArmVirtQemu.dsc`)
    is UNVERIFIED against a real clone; expect real wall-clock time
    (CryptoPkg's vendored OpenSSL/mbedTLS submodules are large).
-   `EFI_CRASH_COURSE.md`'s described `FvBootDxe` bundling driver still
-   doesn't exist anywhere real — if a true bundled build is wanted later,
-   it needs someone to actually author and test that DXE driver first.
-7. If a second target architecture is attempted (see Open questions), it's
+7. `emblab build qemu-arm64-edk2-fvbootdxe-barebox` — validate this after
+   plain `qemu-arm64-edk2-barebox` builds successfully (shares the same
+   `edk2` build, just with the `FvBootDxe` patch + `FV_BOOT_APP_PATH`
+   added — see ADR-010). If the hand-reconstructed patch turns out wrong
+   in some way real building surfaces, fix
+   `manifests/components/edk2/files/0001-fvbootdxe-bundle-app.patch`
+   directly rather than re-deriving it from the upstream POC again.
+   `emblab run` this target and confirm it actually boots barebox with NO
+   `-kernel` flag present — that's the real proof FvBootDxe is finding and
+   loading the embedded payload, not QEMU doing it a different way.
+8. If a second target architecture is attempted (see Open questions), it's
    now just a matter of adding a new target manifest with the right
    `vars.arch`/`vars.goarch`/`vars.edk2_arch` values per stack entry
    (ADR-009) — no component edits needed, that was the whole point.

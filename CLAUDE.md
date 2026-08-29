@@ -6,6 +6,7 @@
 - Never hardcode a cross-component path; use `${component.artifact}` tokens, resolved only at target level
 - Keep components reusable across targets; never reference a sibling component inside a component manifest
 - Components are agnostic of image, architecture, and builddeps — a target's stack entry sets `image:` (required) and may set `builddeps:`; a component may reference `${vars.arch}`-style vars but must not default them, so a target that forgets to set one gets a clear error instead of silently building for the wrong arch (see ADR-009)
+- `build.patches` on a component is its baseline (always applied, every target); a stack entry's own `patches:` is for target-optional extras on top (e.g. one target wants a component built a different way, another doesn't) — see ADR-010
 - Update CONTEXT.md's Proven/In progress/Next sections as part of the same change, not as an afterthought
 - Prefer stdlib; PyYAML is the only mandatory runtime dependency — think twice before adding another
 - Do not read or infer conventions from other projects under `~/sources` (or elsewhere) without being explicitly asked

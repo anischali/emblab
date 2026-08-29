@@ -43,10 +43,14 @@ def patches_hash(component_name, patches):
     return _hash([(filename, _files_content_hash(component_name, [filename])[filename]) for filename in patches])
 
 
-def component_hash(component, resolved_vars, builddeps):
+def component_hash(component, resolved_vars, builddeps, patches):
     """`builddeps` comes from the target's stack entry, not the component —
-    see ADR-009 — so it's a parameter here exactly like `resolved_vars`
-    already is, not read off `component.build`."""
+    see ADR-009. `patches` is the full merged list (component.build.patches
+    + the target's own stack-entry patches — see ADR-010); both are
+    parameters here exactly like `resolved_vars` already is, never read off
+    `component.build` directly, so a target-only change (different
+    builddeps, or an extra target-specific patch) still invalidates the
+    marker even though the component manifest itself didn't change."""
     return _hash(
         {
             "source": {"git": component.source.git, "ref": component.source.ref},
@@ -54,7 +58,7 @@ def component_hash(component, resolved_vars, builddeps):
             "vars": resolved_vars,
             "files": _files_content_hash(component.name, component.build.files),
             "builddeps": sorted(builddeps),
-            "patches": patches_hash(component.name, component.build.patches),
+            "patches": patches_hash(component.name, patches),
         }
     )
 

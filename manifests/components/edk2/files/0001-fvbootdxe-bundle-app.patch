@@ -1,0 +1,711 @@
+diff --git a/ArmVirtPkg/ArmVirt.dsc.inc b/ArmVirtPkg/ArmVirt.dsc.inc
+index fb1edceafcd2..f8f620e861d0 100644
+--- a/ArmVirtPkg/ArmVirt.dsc.inc
++++ b/ArmVirtPkg/ArmVirt.dsc.inc
+@@ -643,6 +643,7 @@ DEFINE FD_SIZE_IN_MB    = 3
+   MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf
+   MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf
+   MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
++  MdeModulePkg/Universal/FvBootDxe/FvBootDxe.inf
+   MdeModulePkg/Application/UiApp/UiApp.inf {
+     <LibraryClasses>
+       NULL|MdeModulePkg/Library/DeviceManagerUiLib/DeviceManagerUiLib.inf
+diff --git a/ArmVirtPkg/ArmVirtQemu.dsc b/ArmVirtPkg/ArmVirtQemu.dsc
+index 0f05fda9363d..e7c15434e111 100644
+--- a/ArmVirtPkg/ArmVirtQemu.dsc
++++ b/ArmVirtPkg/ArmVirtQemu.dsc
+@@ -196,6 +196,10 @@
+   # Point to the MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf
+   gEfiMdeModulePkgTokenSpaceGuid.PcdBootManagerMenuFile|{ 0xdc, 0x5b, 0xc2, 0xee, 0xf2, 0x67, 0x95, 0x4d, 0xb1, 0xd5, 0xf8, 0x1b, 0x20, 0x39, 0xd1, 0x1d }
+ 
++  # FvBootDxe: GUID of the FILE APPLICATION embedded in ArmVirtQemuFvMain.fdf.inc.
++  # Only takes effect if the target's build sets -D FV_BOOT_APP_PATH (see edk2.yaml).
++  gEfiMdeModulePkgTokenSpaceGuid.PcdFvBootApplicationGuid|{0x72,0x4c,0x9a,0x3b,0x5e,0x1f,0x8a,0x4d,0x9c,0x2f,0x4e,0x6b,0x8d,0x1a,0x3f,0x5c}
++
+   #
+   # The maximum physical I/O addressability of the processor, set with
+   # BuildCpuHob().
+diff --git a/ArmVirtPkg/ArmVirtQemuFvMain.fdf.inc b/ArmVirtPkg/ArmVirtQemuFvMain.fdf.inc
+index ad158f57f127..3276e8feb469 100644
+--- a/ArmVirtPkg/ArmVirtQemuFvMain.fdf.inc
++++ b/ArmVirtPkg/ArmVirtQemuFvMain.fdf.inc
+@@ -204,3 +204,16 @@ READ_LOCK_STATUS   = TRUE
+   # Ramdisk support
+   #
+   INF MdeModulePkg/Universal/Disk/RamDiskDxe/RamDiskDxe.inf
++
++  #
++  # FvBootDxe: boots a single EFI application embedded in this FV by GUID,
++  # instead of BdsDxe's normal boot-option search. Only takes effect if the
++  # target build set FV_BOOT_APP_PATH -D and set image: to a component that
++  # built a real payload.efi -- see edk2.yaml/ADR-010.
++  #
++  INF  MdeModulePkg/Universal/FvBootDxe/FvBootDxe.inf
++
++  FILE APPLICATION = 3b9a4c72-1f5e-4d8a-9c2f-4e6b8d1a3f5c {
++      SECTION PE32 = $(FV_BOOT_APP_PATH)
++      SECTION UI   = "FvBootApp"
++  }
+diff --git a/MdeModulePkg/MdeModulePkg.dec b/MdeModulePkg/MdeModulePkg.dec
+index f6b1a73d7091..933ffd5acf94 100644
+--- a/MdeModulePkg/MdeModulePkg.dec
++++ b/MdeModulePkg/MdeModulePkg.dec
+@@ -1612,6 +1612,12 @@
+   # @Prompt Driver Health Management Form
+   gEfiMdeModulePkgTokenSpaceGuid.PcdDriverHealthConfigureForm|{ 0xf4, 0xd9, 0x96, 0x42, 0xfc, 0xf6, 0xde, 0x4d, 0x86, 0x85, 0x8c, 0xe2, 0xd7, 0x9d, 0x90, 0xf0 }|VOID*|0x0001006c
+ 
++  ## GUID of the EFI APPLICATION embedded in the Firmware Volume that
++  #  FvBootDxe loads exclusively. Platforms MUST override this in their
++  #  DSC [PcdsFixedAtBuild]. A zero GUID triggers ASSERT at init.
++  # @Prompt GUID of the FV-embedded EFI application to boot.
++  gEfiMdeModulePkgTokenSpaceGuid.PcdFvBootApplicationGuid|{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}|VOID*|0x00010097
++
+   ## The number of bytes between registers in serial device.  The default is 1 byte.
+   # @Prompt Serial Port Register Stride in Bytes
+   gEfiMdeModulePkgTokenSpaceGuid.PcdSerialRegisterStride|1|UINT32|0x0001006d
+diff --git a/MdeModulePkg/MdeModulePkg.dsc b/MdeModulePkg/MdeModulePkg.dsc
+index 177703211d92..51a6851cad2e 100644
+--- a/MdeModulePkg/MdeModulePkg.dsc
++++ b/MdeModulePkg/MdeModulePkg.dsc
+@@ -352,6 +352,7 @@
+   MdeModulePkg/Library/HobPrintLib/HobPrintLib.inf
+ 
+   MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
++  MdeModulePkg/Universal/FvBootDxe/FvBootDxe.inf
+   MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf
+   MdeModulePkg/Application/UiApp/UiApp.inf{
+     <LibraryClasses>
+diff --git a/MdeModulePkg/Universal/FvBootDxe/FvBootDxe.c b/MdeModulePkg/Universal/FvBootDxe/FvBootDxe.c
+new file mode 100644
+index 000000000000..a2bcad22dc8e
+--- /dev/null
++++ b/MdeModulePkg/Universal/FvBootDxe/FvBootDxe.c
+@@ -0,0 +1,446 @@
++/** @file
++  FvBootDxe.c — Minimal BDS replacement that loads a single EFI application
++  embedded in a Firmware Volume and transfers control to it permanently.
++
++  Before handoff:
++    - All controllers connected (block, storage, console, PCI)
++    - All consoles wired into ConSplitter via EfiBootManagerConnectAllConsoles
++    - BootOptionSupport variable set
++    - DTB configuration table verified
++
++  SPDX-License-Identifier: BSD-2-Clause-Patent
++  Copyright (c) 2026, Your Organisation. All rights reserved.
++**/
++
++#include "FvBootDxe.h"
++#include <Library/UefiBootManagerLib.h>
++#include <Protocol/SimpleTextIn.h>
++
++// ── Module globals ────────────────────────────────────────────────────────────
++
++STATIC EFI_BDS_ARCH_PROTOCOL  mBds = { FvBootBdsEntry };
++
++//
++// EFI DTB Table GUID — QEMU installs the device tree here.
++//
++STATIC EFI_GUID mDtbTableGuid = {
++  0xb1b621d5, 0xf19c, 0x41a5,
++  { 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0 }
++};
++
++// ── Internal helpers ──────────────────────────────────────────────────────────
++
++/**
++  Find the EFI application in any available Firmware Volume.
++
++  @param[out] FvHandle   Handle of the FV containing the application.
++  @retval EFI_SUCCESS    Application found.
++  @retval other          Not found or protocol error.
++**/
++STATIC
++EFI_STATUS
++FindApplicationInFv (
++  OUT EFI_HANDLE  *FvHandle
++  )
++{
++  EFI_STATUS                     Status;
++  UINTN                          HandleCount;
++  EFI_HANDLE                    *Handles;
++  UINTN                          Index;
++  EFI_FIRMWARE_VOLUME2_PROTOCOL *Fv;
++  VOID                          *Buffer;
++  UINTN                          BufferSize;
++  UINT32                         AuthStatus;
++  EFI_GUID                       AppGuid;
++
++  ASSERT (FvHandle != NULL);
++  CopyGuid (&AppGuid, (EFI_GUID *)PcdGetPtr (PcdFvBootApplicationGuid));
++
++  HandleCount = 0;
++  Handles     = NULL;
++
++  Status = gBS->LocateHandleBuffer (
++                  ByProtocol,
++                  &gEfiFirmwareVolume2ProtocolGuid,
++                  NULL, &HandleCount, &Handles
++                  );
++  if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR,
++      "[FvBootDxe] LocateHandleBuffer(FV2) failed: %r\n", Status));
++    return Status;
++  }
++
++  Status = EFI_NOT_FOUND;
++
++  for (Index = 0; Index < HandleCount; Index++) {
++    Status = gBS->HandleProtocol (
++                    Handles[Index],
++                    &gEfiFirmwareVolume2ProtocolGuid,
++                    (VOID **)&Fv
++                    );
++    if (EFI_ERROR (Status)) continue;
++
++    Buffer     = NULL;
++    BufferSize = 0;
++
++    Status = Fv->ReadSection (
++                   Fv, &AppGuid,
++                   EFI_SECTION_PE32, 0,
++                   &Buffer, &BufferSize, &AuthStatus
++                   );
++    if (!EFI_ERROR (Status)) {
++      FreePool (Buffer);
++      *FvHandle = Handles[Index];
++      FreePool (Handles);
++      return EFI_SUCCESS;
++    }
++  }
++
++  FreePool (Handles);
++  return EFI_NOT_FOUND;
++}
++
++/**
++  Build a Firmware Volume device path for the application GUID.
++
++  @param[in]  FvHandle  Handle of the Firmware Volume.
++  @return  Allocated device path or NULL.
++**/
++STATIC
++EFI_DEVICE_PATH_PROTOCOL *
++BuildFvApplicationDevicePath (
++  IN EFI_HANDLE  FvHandle
++  )
++{
++  EFI_GUID                           AppGuid;
++  MEDIA_FW_VOL_FILEPATH_DEVICE_PATH  FileNode;
++
++  CopyGuid (&AppGuid, (EFI_GUID *)PcdGetPtr (PcdFvBootApplicationGuid));
++  EfiInitializeFwVolDevicepathNode (&FileNode, &AppGuid);
++
++  return AppendDevicePathNode (
++           DevicePathFromHandle (FvHandle),
++           (EFI_DEVICE_PATH_PROTOCOL *)&FileNode
++           );
++}
++
++// ── System table setup ────────────────────────────────────────────────────────
++
++/**
++  Connect all controller handles recursively.
++**/
++STATIC
++VOID
++ConnectAllControllers (
++  VOID
++  )
++{
++  EFI_STATUS   Status;
++  UINTN        HandleCount;
++  EFI_HANDLE  *Handles;
++  UINTN        Index;
++
++  Status = gBS->LocateHandleBuffer (
++                  AllHandles, NULL, NULL,
++                  &HandleCount, &Handles
++                  );
++  if (EFI_ERROR (Status)) return;
++
++  for (Index = 0; Index < HandleCount; Index++) {
++    gBS->ConnectController (Handles[Index], NULL, NULL, TRUE);
++  }
++
++  FreePool (Handles);
++}
++
++/**
++  Enumerate every SimpleTextIn/Out handle, add its device path to the
++  ConIn/ConOut/ErrOut NVRAM variables, then connect all default consoles.
++
++  This replicates BdsDxe's EfiBootManagerConnectAllConsoles() fallback
++  (which is internal to UefiBootManagerLib and not in the public header).
++  No disconnect is performed, so VirtioBlk partitions and FAT remain intact.
++**/
++STATIC
++VOID
++ConnectAllConsoles (
++  VOID
++  )
++{
++  EFI_STATUS                Status;
++  UINTN                     HandleCount;
++  EFI_HANDLE               *HandleBuffer;
++  UINTN                     Index;
++  EFI_DEVICE_PATH_PROTOCOL *ConDevicePath;
++
++  HandleCount  = 0;
++  HandleBuffer = NULL;
++
++  //
++  // Add every SimpleTextInput handle's device path to the ConIn variable.
++  //
++  Status = gBS->LocateHandleBuffer (
++                  ByProtocol,
++                  &gEfiSimpleTextInProtocolGuid,
++                  NULL, &HandleCount, &HandleBuffer
++                  );
++  if (!EFI_ERROR (Status)) {
++    for (Index = 0; Index < HandleCount; Index++) {
++      ConDevicePath = NULL;
++      if (!EFI_ERROR (gBS->HandleProtocol (
++                             HandleBuffer[Index],
++                             &gEfiDevicePathProtocolGuid,
++                             (VOID **)&ConDevicePath))) {
++        EfiBootManagerUpdateConsoleVariable (ConIn, ConDevicePath, NULL);
++      }
++    }
++    FreePool (HandleBuffer);
++    HandleBuffer = NULL;
++  }
++
++  //
++  // Add every SimpleTextOutput handle's device path to ConOut and ErrOut.
++  //
++  Status = gBS->LocateHandleBuffer (
++                  ByProtocol,
++                  &gEfiSimpleTextOutProtocolGuid,
++                  NULL, &HandleCount, &HandleBuffer
++                  );
++  if (!EFI_ERROR (Status)) {
++    for (Index = 0; Index < HandleCount; Index++) {
++      ConDevicePath = NULL;
++      if (!EFI_ERROR (gBS->HandleProtocol (
++                             HandleBuffer[Index],
++                             &gEfiDevicePathProtocolGuid,
++                             (VOID **)&ConDevicePath))) {
++        EfiBootManagerUpdateConsoleVariable (ConOut, ConDevicePath, NULL);
++        EfiBootManagerUpdateConsoleVariable (ErrOut, ConDevicePath, NULL);
++      }
++    }
++    FreePool (HandleBuffer);
++  }
++
++  //
++  // Now trigger ConPlatformDxe to add each variable-listed device to
++  // the ConSplitter (wires gST->ConOut / gST->ConIn).
++  //
++  EfiBootManagerConnectAllDefaultConsoles ();
++
++  DEBUG ((DEBUG_ERROR,
++    "[FvBootDxe] gST->ConOut = %p  ConIn = %p\n",
++    gST->ConOut, gST->ConIn));
++}
++
++/**
++  Verify the DTB configuration table entry is present.
++**/
++STATIC
++VOID
++VerifyDtbConfigTable (
++  VOID
++  )
++{
++  UINTN    Index;
++  BOOLEAN  Found;
++
++  Found = FALSE;
++
++  for (Index = 0; Index < gST->NumberOfTableEntries; Index++) {
++    if (CompareGuid (
++          &gST->ConfigurationTable[Index].VendorGuid,
++          &mDtbTableGuid))
++    {
++      DEBUG ((DEBUG_ERROR,
++        "[FvBootDxe] DTB config table found at %p\n",
++        gST->ConfigurationTable[Index].VendorTable));
++      Found = TRUE;
++      break;
++    }
++  }
++
++  if (!Found) {
++    DEBUG ((DEBUG_ERROR,
++      "[FvBootDxe] WARNING: DTB not in config table — "
++      "Barebox may fail to enumerate hardware\n"));
++  }
++}
++
++/**
++  Dump all configuration tables for diagnostics.
++**/
++STATIC
++VOID
++DumpConfigTables (
++  VOID
++  )
++{
++  UINTN   Index;
++  CHAR16  GuidStr[64];
++
++  DEBUG ((DEBUG_ERROR,
++    "[FvBootDxe] SystemTable has %d config table(s)\n",
++    gST->NumberOfTableEntries));
++
++  for (Index = 0; Index < gST->NumberOfTableEntries; Index++) {
++    UnicodeSPrint (
++      GuidStr, sizeof (GuidStr), L"%g",
++      &gST->ConfigurationTable[Index].VendorGuid
++      );
++    DEBUG ((DEBUG_ERROR,
++      "[FvBootDxe]   [%d] %s = %p\n",
++      Index,
++      GuidStr,
++      gST->ConfigurationTable[Index].VendorTable
++      ));
++  }
++}
++
++/**
++  Set BootOptionSupport UEFI variable.
++**/
++STATIC
++VOID
++SetBootOptionSupport (
++  VOID
++  )
++{
++  UINT32  BootOptionSupport;
++
++  BootOptionSupport = EFI_BOOT_OPTION_SUPPORT_APP |
++                      EFI_BOOT_OPTION_SUPPORT_SYSPREP;
++
++  gRT->SetVariable (
++         EFI_BOOT_OPTION_SUPPORT_VARIABLE_NAME,
++         &gEfiGlobalVariableGuid,
++         EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS,
++         sizeof (BootOptionSupport),
++         &BootOptionSupport
++         );
++}
++
++// ── BDS Entry Point ───────────────────────────────────────────────────────────
++
++/**
++  BdsEntry — called by DXE Core after all drivers are dispatched.
++
++  Setup order:
++    1. BootOptionSupport variable
++    2. Connect all controllers (SerialDxe, VirtioBlk, PCI, GOP, FAT all bind)
++    3. Connect all consoles via EfiBootManagerConnectAllConsoles
++       (adds every SimpleTextOutput/Input to ConSplitter — same as BdsDxe fallback)
++    4. Verify DTB in config table
++    5. Dump config tables (debug)
++    6. Load and start the FV application
++
++  @param[in]  This    EFI_BDS_ARCH_PROTOCOL instance.
++**/
++VOID
++EFIAPI
++FvBootBdsEntry (
++  IN EFI_BDS_ARCH_PROTOCOL  *This
++  )
++{
++  EFI_STATUS                Status;
++  EFI_HANDLE                FvHandle;
++  EFI_DEVICE_PATH_PROTOCOL *DevicePath;
++  EFI_HANDLE                ImageHandle;
++  UINTN                     ExitDataSize;
++
++  // ── 1. BootOptionSupport ─────────────────────────────────────────────────
++  SetBootOptionSupport ();
++
++  // ── 2. Connect all controllers ───────────────────────────────────────────
++  //
++  // Single pass — SerialDxe, TerminalDxe, VirtioBlk, PartitionDxe, FAT,
++  // GraphicsConsoleDxe, PCI all bind here.  No disconnect needed.
++  //
++  DEBUG ((DEBUG_ERROR, "[FvBootDxe] Connecting all controllers\n"));
++  ConnectAllControllers ();
++
++  // ── 3. Wire all consoles into the ConSplitter ────────────────────────────
++  //
++  // Enumerate every SimpleTextIn/Out handle, add device paths to ConIn/ConOut/
++  // ErrOut NVRAM variables, then call EfiBootManagerConnectAllDefaultConsoles()
++  // so ConPlatformDxe adds each one to the ConSplitter (gST->ConOut/ConIn).
++  // No disconnect — VirtioBlk partitions and FAT remain intact.
++  //
++  DEBUG ((DEBUG_ERROR, "[FvBootDxe] Connecting all consoles\n"));
++  ConnectAllConsoles ();
++
++  // ── 4. Verify DTB is in the config table ─────────────────────────────────
++  VerifyDtbConfigTable ();
++
++  // ── 5. Dump all config tables ─────────────────────────────────────────────
++  DumpConfigTables ();
++
++  // ── 6. Load and start the FV application ─────────────────────────────────
++  FvHandle = NULL;
++  Status   = FindApplicationInFv (&FvHandle);
++  if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR,
++      "[FvBootDxe] Application not found in FV: %r\n", Status));
++    goto Halt;
++  }
++
++  DevicePath = BuildFvApplicationDevicePath (FvHandle);
++  if (DevicePath == NULL) {
++    DEBUG ((DEBUG_ERROR,
++      "[FvBootDxe] Failed to build device path\n"));
++    goto Halt;
++  }
++
++  ImageHandle  = NULL;
++  ExitDataSize = 0;
++
++  Status = gBS->LoadImage (
++                  FALSE, gImageHandle,
++                  DevicePath, NULL, 0,
++                  &ImageHandle
++                  );
++  FreePool (DevicePath);
++
++  if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR,
++      "[FvBootDxe] LoadImage failed: %r\n", Status));
++    goto Halt;
++  }
++
++  DEBUG ((DEBUG_ERROR,
++    "[FvBootDxe] Transferring control to FV application\n"));
++
++  Status = gBS->StartImage (ImageHandle, &ExitDataSize, NULL);
++
++  DEBUG ((DEBUG_ERROR,
++    "[FvBootDxe] Application returned unexpectedly: %r\n", Status));
++
++Halt:
++  DEBUG ((DEBUG_ERROR, "[FvBootDxe] Halting (CpuDeadLoop)\n"));
++  CpuDeadLoop ();
++}
++
++// ── Module Entry Point ────────────────────────────────────────────────────────
++
++EFI_STATUS
++EFIAPI
++FvBootDxeEntryPoint (
++  IN EFI_HANDLE        ImageHandle,
++  IN EFI_SYSTEM_TABLE *SystemTable
++  )
++{
++  EFI_STATUS  Status;
++
++  ASSERT (!IsZeroGuid ((EFI_GUID *)PcdGetPtr (PcdFvBootApplicationGuid)));
++
++  Status = gBS->InstallMultipleProtocolInterfaces (
++                  &ImageHandle,
++                  &gEfiBdsArchProtocolGuid, &mBds,
++                  NULL
++                  );
++  ASSERT_EFI_ERROR (Status);
++
++  DEBUG ((DEBUG_INFO,
++    "[FvBootDxe] Installed BDS — will boot FV application %g\n",
++    (EFI_GUID *)PcdGetPtr (PcdFvBootApplicationGuid)));
++
++  return Status;
++}
+diff --git a/MdeModulePkg/Universal/FvBootDxe/FvBootDxe.h b/MdeModulePkg/Universal/FvBootDxe/FvBootDxe.h
+new file mode 100644
+index 000000000000..874159cf3e62
+--- /dev/null
++++ b/MdeModulePkg/Universal/FvBootDxe/FvBootDxe.h
+@@ -0,0 +1,58 @@
++/** @file
++  FvBootDxe.h — Private header for FvBootDxe.
++
++  SPDX-License-Identifier: BSD-2-Clause-Patent
++**/
++
++#ifndef FV_BOOT_DXE_H_
++#define FV_BOOT_DXE_H_
++
++#include <Uefi.h>
++
++#include <Library/BaseLib.h>
++#include <Library/BaseMemoryLib.h>
++#include <Library/DebugLib.h>
++#include <Library/DevicePathLib.h>
++#include <Library/MemoryAllocationLib.h>
++#include <Library/PcdLib.h>
++#include <Library/PrintLib.h>
++#include <Library/UefiBootServicesTableLib.h>
++#include <Library/UefiRuntimeServicesTableLib.h>
++#include <Library/UefiDriverEntryPoint.h>
++#include <Library/UefiLib.h>
++
++#include <Protocol/Bds.h>
++#include <Protocol/DevicePath.h>
++#include <Protocol/FirmwareVolume2.h>
++#include <Protocol/LoadedImage.h>
++#include <Protocol/SerialIo.h>
++#include <Protocol/SimpleTextIn.h>
++#include <Protocol/SimpleTextOut.h>
++
++#include <Guid/GlobalVariable.h>
++#include <Guid/FirmwareFileSystem2.h>
++
++#include <Pi/PiFirmwareFile.h>
++#include <Pi/PiFirmwareVolume.h>
++
++/**
++  BDS entry point — sets up console and boots the FV application.
++  Never returns.
++**/
++VOID
++EFIAPI
++FvBootBdsEntry (
++  IN EFI_BDS_ARCH_PROTOCOL  *This
++  );
++
++/**
++  Module entry point — installs EFI_BDS_ARCH_PROTOCOL.
++**/
++EFI_STATUS
++EFIAPI
++FvBootDxeEntryPoint (
++  IN EFI_HANDLE        ImageHandle,
++  IN EFI_SYSTEM_TABLE *SystemTable
++  );
++
++#endif // FV_BOOT_DXE_H_
+\ No newline at end of file
+diff --git a/MdeModulePkg/Universal/FvBootDxe/FvBootDxe.inf b/MdeModulePkg/Universal/FvBootDxe/FvBootDxe.inf
+new file mode 100644
+index 000000000000..8a0102ecdb0e
+--- /dev/null
++++ b/MdeModulePkg/Universal/FvBootDxe/FvBootDxe.inf
+@@ -0,0 +1,68 @@
++## @file
++#  FvBootDxe.inf — Minimal BDS DXE driver that boots a single EFI application
++#  embedded in the platform Firmware Volume.
++#
++#  Handles full console setup (serial ConOut/ConIn/ErrOut), BootOptionSupport,
++#  and DTB config table verification before handoff.
++#
++#  SPDX-License-Identifier: BSD-2-Clause-Patent
++#  Copyright (c) 2026, Your Organisation. All rights reserved.
++##
++
++[Defines]
++  INF_VERSION    = 0x00010017
++  BASE_NAME      = FvBootDxe
++  MODULE_UNI_FILE= FvBootDxe.uni
++  FILE_GUID      = 6D5B4F83-2C1E-4A9D-B7E3-1F8C2D4A6B0E
++  MODULE_TYPE    = DXE_DRIVER
++  VERSION_STRING = 1.0
++  ENTRY_POINT    = FvBootDxeEntryPoint
++
++[Sources]
++  FvBootDxe.c
++  FvBootDxe.h
++
++[Packages]
++  MdePkg/MdePkg.dec
++  MdeModulePkg/MdeModulePkg.dec
++
++[LibraryClasses]
++  BaseLib
++  BaseMemoryLib
++  DebugLib
++  DevicePathLib
++  MemoryAllocationLib
++  PcdLib
++  PrintLib
++  UefiBootManagerLib
++  UefiBootServicesTableLib
++  UefiRuntimeServicesTableLib
++  UefiDriverEntryPoint
++  UefiLib
++
++[Protocols]
++  gEfiBdsArchProtocolGuid              ## PRODUCES
++  gEfiFirmwareVolume2ProtocolGuid      ## CONSUMES
++  gEfiSerialIoProtocolGuid             ## CONSUMES
++  gEfiDevicePathProtocolGuid           ## CONSUMES
++  gEfiDebugSupportProtocolGuid         ## CONSUMES
++  gEfiDebugPortProtocolGuid            ## CONSUMES
++  gEfiDevicePathProtocolGuid           ## CONSUMES
++  gEfiSimpleTextInProtocolGuid         ## CONSUMES
++  gEfiSimpleTextOutProtocolGuid        ## CONSUMES
++  gEfiSimpleTextInProtocolGuid         ## CONSUMES
++  gEfiGraphicsOutputProtocolGuid       ## CONSUMES
++
++[Guids]
++  gEfiGlobalVariableGuid            ## CONSUMES ## PRODUCES
++
++[Pcd]
++  gEfiMdeModulePkgTokenSpaceGuid.PcdFvBootApplicationGuid  ## CONSUMES
++
++[Depex]
++  gEfiFirmwareVolume2ProtocolGuid AND
++  gEfiVariableWriteArchProtocolGuid AND
++  gEfiCpuArchProtocolGuid
++
++[UserExtensions.TianoCore."ExtraFiles"]
++  FvBootDxeExtra.uni
+\ No newline at end of file
+diff --git a/MdeModulePkg/Universal/FvBootDxe/FvBootDxe.uni b/MdeModulePkg/Universal/FvBootDxe/FvBootDxe.uni
+new file mode 100644
+index 000000000000..8c52f127362c
+--- /dev/null
++++ b/MdeModulePkg/Universal/FvBootDxe/FvBootDxe.uni
+@@ -0,0 +1,20 @@
++// /** @file
++// FvBootDxe.uni — Localizable string definitions for FvBootDxe.
++//
++// SPDX-License-Identifier: BSD-2-Clause-Patent
++//
++// **/
++
++#string STR_MODULE_ABSTRACT
++#language en-US
++"Minimal BDS driver: boots one EFI application from the Firmware Volume"
++
++#string STR_MODULE_DESCRIPTION
++#language en-US
++"FvBootDxe replaces the standard BdsDxe Boot Device Selection driver for "
++"embedded and locked-down products.  It loads and starts the single EFI "
++"application identified by PcdFvBootApplicationGuid from the platform Firmware "
++"Volume, then halts permanently if the application returns.  No boot menu, "
++"no UEFI Shell, no boot option list, no timeout.  The application's integrity "
++"is guaranteed by the platform Root of Trust that signs the Firmware Image "
++"containing this driver; no separate UEFI Secure Boot db key is required."
+diff --git a/MdeModulePkg/Universal/FvBootDxe/FvBootDxeExtra.uni b/MdeModulePkg/Universal/FvBootDxe/FvBootDxeExtra.uni
+new file mode 100644
+index 000000000000..e64d9c18aa11
+--- /dev/null
++++ b/MdeModulePkg/Universal/FvBootDxe/FvBootDxeExtra.uni
+@@ -0,0 +1,10 @@
++// /** @file
++// FvBootDxeExtra.uni
++//
++// SPDX-License-Identifier: BSD-2-Clause-Patent
++//
++// **/
++
++#string STR_PROPERTIES_MODULE_NAME
++#language en-US
++"FV Boot DXE Driver"

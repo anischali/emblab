@@ -1,9 +1,13 @@
 """Fetch component source trees: shallow git clone/checkout at a pinned ref,
 optionally initialize its git submodules (source.submodules: true — needed
 by e.g. edk2's CryptoPkg, which vendors OpenSSL/mbedTLS as submodules), then
-apply the component's declared build.patches on top (Yocto-style: each
-component owns a manifests/components/<name>/files/ directory holding its
-own patches, applied in the order listed).
+apply patches on top (Yocto-style: each component owns a
+manifests/components/<name>/files/ directory holding its own patches,
+applied in the order listed). The patches applied are whatever the caller
+passes in — build.py passes component.build.patches (always applied)
+concatenated with the target's stack-entry patches (target-optional extras,
+e.g. edk2's FvBootDxe bundling — see ADR-010); cli.py's standalone `fetch`
+command, with no target in play, passes just component.build.patches.
 
 Phase 1 manifests pin `ref` to a branch name (e.g. "master") rather than an
 exact SHA — `git clone --depth 1 --branch <ref>` only works for branches/tags,
@@ -51,19 +55,23 @@ def _init_submodules(dest, component, *, log=print):
     )
 
 
-def _apply_patches(dest, component, *, log=print):
-    for filename in component.build.patches:
+def _apply_patches(dest, component, patches, *, log=print):
+    for filename in patches:
         patch_path = manifests.component_file_path(component.name, filename)
         log(f"[{component.name}] applying patch {filename}")
         subprocess.run(["git", "apply", str(patch_path)], cwd=dest, check=True)
 
 
-def ensure_source(workspace, component, *, log=print):
+def ensure_source(workspace, component, patches, *, log=print):
     """Clone `component`'s source if missing, re-fetch if the pinned ref has
-    moved upstream, or re-fetch if build.patches changed — a patch is only
-    ever applied once, right after a fresh clone, onto a known-pristine tree
+    moved upstream, or re-fetch if `patches` changed — a patch is only ever
+    applied once, right after a fresh clone, onto a known-pristine tree
     (never reapplied onto an already-patched, possibly-mid-build checkout).
     Returns the local source directory path.
+
+    `patches` is the full, ordered list to apply — the caller's
+    responsibility to assemble (see module docstring); this function does
+    not read component.build.patches itself.
 
     A sourceless component (component.source.git is None — a purely local
     packaging/assembly step like fit-image, with no upstream repo) just
@@ -75,7 +83,7 @@ def ensure_source(workspace, component, *, log=print):
         dest.mkdir(parents=True, exist_ok=True)
         return dest
 
-    current_patches_hash = state.patches_hash(component.name, component.build.patches)
+    current_patches_hash = state.patches_hash(component.name, patches)
     patches_marker = dest / PATCHES_MARKER_NAME
 
     if dest.exists() and (dest / ".git").exists():
@@ -89,7 +97,7 @@ def ensure_source(workspace, component, *, log=print):
         if ref_moved:
             log(f"[{component.name}] ref '{component.source.ref}' moved upstream, re-cloning")
         else:
-            log(f"[{component.name}] build.patches changed, re-cloning to reapply cleanly")
+            log(f"[{component.name}] patches changed, re-cloning to reapply cleanly")
         shutil.rmtree(dest)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -104,7 +112,7 @@ def ensure_source(workspace, component, *, log=print):
     log(f"[{component.name}] cloned {component.source.git}@{component.source.ref} -> {dest}")
 
     _init_submodules(dest, component, log=log)
-    _apply_patches(dest, component, log=log)
+    _apply_patches(dest, component, patches, log=log)
     state.write_marker(patches_marker, current_patches_hash)
 
     return dest

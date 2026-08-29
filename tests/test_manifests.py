@@ -140,6 +140,58 @@ def test_load_target_stack_entry_builddeps_is_parsed(tmp_path, monkeypatch):
     assert target.stack[0].builddeps == ["foo", "bar"]
 
 
+def test_load_target_stack_entry_patches_defaults_to_empty_list():
+    target = manifests.load_target("fake-target")
+    assert all(entry.patches == [] for entry in target.stack)
+
+
+def test_load_target_stack_entry_patches_is_parsed(tmp_path, monkeypatch):
+    manifests_dir = tmp_path / "manifests"
+    _write(manifests_dir / "images" / "img.yaml", "base_image: x\nprovision: []\n")
+    _write(manifests_dir / "components" / "comp" / "files" / "0001-extra.patch", "extra\n")
+    _write(
+        manifests_dir / "components" / "comp" / "comp.yaml",
+        "source:\n  git: x\n  ref: main\n"
+        "build:\n  vars: {}\n  command: echo hi\nartifacts: {}\n",
+    )
+    _write(
+        manifests_dir / "targets" / "patches-target.yaml",
+        "arch: fake\n"
+        "stack:\n"
+        "  - component: comp\n"
+        "    image: img\n"
+        "    patches:\n      - 0001-extra.patch\n"
+        "    vars: {}\n"
+        "qemu:\n  binary: \"true\"\n  args: []\n",
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+    target = manifests.load_target("patches-target")
+    assert target.stack[0].patches == ["0001-extra.patch"]
+
+
+def test_load_target_stack_entry_patches_missing_on_disk_raises_clear_error(tmp_path, monkeypatch):
+    manifests_dir = tmp_path / "manifests"
+    _write(manifests_dir / "images" / "img.yaml", "base_image: x\nprovision: []\n")
+    _write(
+        manifests_dir / "components" / "comp" / "comp.yaml",
+        "source:\n  git: x\n  ref: main\n"
+        "build:\n  vars: {}\n  command: echo hi\nartifacts: {}\n",
+    )
+    _write(
+        manifests_dir / "targets" / "bad-patches-target.yaml",
+        "arch: fake\n"
+        "stack:\n"
+        "  - component: comp\n"
+        "    image: img\n"
+        "    patches:\n      - 0001-missing.patch\n"
+        "    vars: {}\n"
+        "qemu:\n  binary: \"true\"\n  args: []\n",
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+    with pytest.raises(ManifestError, match="0001-missing.patch"):
+        manifests.load_target("bad-patches-target")
+
+
 def _write(path, content):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)

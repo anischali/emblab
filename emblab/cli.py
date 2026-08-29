@@ -37,7 +37,9 @@ def cmd_show(args):
 
 def cmd_fetch(args):
     component = manifests.load_component(args.component)
-    sources.ensure_source(WORKSPACE, component)
+    # No target in play here, so no target-specific extra patches (ADR-010)
+    # — just the component's own always-applied build.patches.
+    sources.ensure_source(WORKSPACE, component, component.build.patches)
 
 
 def cmd_build(args):

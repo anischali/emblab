@@ -4,18 +4,20 @@ description: >
   (the PACKAGES_PATH/edksetup.sh/BaseTools/build invocation) and
   barebox-arm64-poc/edk/containers/Dockerfile (the package list TianoCore's
   own build container installs). Builds vanilla upstream edk2's ArmVirtQemu
-  platform only. Bundling a payload (e.g. barebox) into the firmware volume
-  needs a custom BDS driver + a patched ArmVirtQemuFvMain.fdf.inc that
-  barebox-arm64-poc/edk documents as a *design* (EFI_CRASH_COURSE.md
-  section 16 describes a "FvBootDxe" driver reading a FILE APPLICATION
-  section by GUID) but does not actually implement anywhere in that
-  checkout — confirmed via `git status`/`git log`/branches/stash/reflog on
-  the local edk2 clone there: a plain, unmodified upstream checkout at the
-  pinned commit in edk2.commit. See CONTEXT.md for what emblab does
-  instead until that driver exists somewhere real to transcribe.
-  ArmVirtQemu.dsc doesn't reference edk2-platforms/edk2-non-osi (those are
-  only in build.run's PACKAGES_PATH for other platforms), so this
-  component clones just edk2 itself.
+  platform by default. ArmVirtQemu.dsc doesn't reference edk2-platforms/
+  edk2-non-osi (those are only in build.run's PACKAGES_PATH for other
+  platforms), so this component clones just edk2 itself.
+
+  Bundling a payload (e.g. barebox) into the firmware volume so it boots
+  without a separate QEMU -kernel needs a custom BDS driver — real source
+  now exists at https://codeberg.org/anischali/FvBootDxe (the barebox-
+  arm64-poc/edk EFI_CRASH_COURSE.md section 16 that first described this
+  design predates that repo and doesn't implement it itself). Available as
+  files/0001-fvbootdxe-bundle-app.patch — a target opts in by naming it in
+  its own stack entry's patches: (a target-specific extra, see ADR-010),
+  it is NOT in this component's own build.patches and so is not applied by
+  default. Also needs vars.fv_boot_app_flag (below) set by that same
+  target, to actually reference a built EFI payload.
 source:
   git: https://github.com/tianocore/edk2.git
   ref: master
@@ -33,6 +35,16 @@ build:
   vars:
     platform: ArmVirtQemu
     platform_path: ArmVirtPkg
+    # Empty by default (plain vanilla firmware, no bundled payload) — make
+    # needs this flag entirely ABSENT, not present-with-empty-value, same
+    # conditionally-populated-var trick as tf-a.yaml's bl32_flags/
+    # bl33_flags. A target that wants FvBootDxe bundling (see description
+    # above) sets this to "-D FV_BOOT_APP_PATH=<path-to-payload.efi>" —
+    # e.g. "-D FV_BOOT_APP_PATH=${barebox.images}/barebox-dt-2nd.img"
+    # (barebox's efi_v8_defconfig output *is* a PE32 EFI application
+    # despite the .img name — confirmed: barebox.efi is a build-time
+    # symlink to the same file).
+    fv_boot_app_flag: ""
   command: >-
     set -e;
     export PACKAGES_PATH=$PWD;
@@ -40,6 +52,6 @@ build:
     pip3 install --break-system-packages -r pip-requirements.txt;
     . ./edksetup.sh;
     make -C BaseTools;
-    build -a ${vars.edk2_arch} -t GCC5 -b DEBUG -p ${vars.platform_path}/${vars.platform}.dsc
+    build -a ${vars.edk2_arch} -t GCC5 -b DEBUG -p ${vars.platform_path}/${vars.platform}.dsc ${vars.fv_boot_app_flag}
 artifacts:
   fd: Build/${vars.platform}-${vars.edk2_arch}/DEBUG_GCC5/FV/QEMU_EFI.fd

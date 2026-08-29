@@ -65,6 +65,7 @@ class StackEntry:
     vars: dict
     image: str  # required — which image container this component builds under, for this target
     builddeps: list  # apt package names installed into that (image, component) container, for this target
+    patches: list  # extra filenames (component's own files/ dir), applied after build.patches, for this target only
 
 
 @dataclasses.dataclass
@@ -288,12 +289,23 @@ def load_target(name):
                 f"manifests/images/{image_name}.yaml"
             )
 
+        entry_patches = list(raw_entry.get("patches", []))
+        for filename in entry_patches:
+            patch_path = component_file_path(component_name, filename)
+            if not patch_path.exists():
+                raise ManifestError(
+                    f"{_display(path)}: stack[{i}] ('{component_name}') "
+                    f"patches entry '{filename}' has no file at "
+                    f"manifests/components/{component_name}/files/{filename}"
+                )
+
         stack.append(
             StackEntry(
                 component=component_name,
                 vars=dict(raw_entry.get("vars") or {}),
                 image=image_name,
                 builddeps=list(raw_entry.get("builddeps", [])),
+                patches=entry_patches,
             )
         )
 
