@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# fitkeys-ctl — generate/revoke RSA or EC keypairs + self-signed x509 certs
+# for FIT image signing (mkimage -k <dir>) or a barebox public-key
+# keystore. Supersedes the old generate-fitkeys (fixed RSA/2048, no
+# control over a cert's validity window, no way to invalidate one
+# afterwards) — same lineage (barebox-arm64-poc/generate-fit's
+# generate_keys()), rebuilt on `openssl ca -selfsign` instead of plain
+# `openssl req -x509`, since -selfsign is the only openssl mode able to set
+# explicit -startdate/-enddate values, which `revoke` needs in order to
+# push notAfter into the past. Verified for real (RSA + EC generate, plus a
+# revoke shown expired by `openssl x509 -checkend 0`) against this
+# project's own emblab-gnu-aarch64 container (OpenSSL 3.0.20).
+#
+# Usage:
+#   fitkeys-ctl generate [options]
+#   fitkeys-ctl revoke   [options]
+#
+# generate options:
+#   --out-dir DIR       output directory (default: ./keys)
+#   --name NAME         key/cert basename -> <out-dir>/<name>.{key,crt} (default: dev-new)
+#   --algo rsa|ec       key algorithm (default: rsa)
+#   --bits N            RSA key size (default: 2048; ignored for --algo ec)
+#   --curve NAME        EC curve (default: prime256v1; ignored for --algo rsa)
+#   --subject DN        certificate subject, e.g. /CN=foo/O=bar (default: /CN=<name>)
+#   --not-before DATE   anything `date -d` accepts (default: now)
+#   --not-after DATE    anything `date -d` accepts (default: +3650 days)
+#
+# revoke options:
+#   --out-dir DIR       directory holding the existing <name>.key (default: ./keys)
+#   --name NAME         key/cert basename (default: dev-new)
+#   --subject DN        must match what --subject generate used, if it was
+#                       overridden — revoke re-signs from scratch and has no
+#                       way to read the old cert's subject back out
+#                       (default: /CN=<name>)
+#   --at DATE           notAfter to shrink to (default: now) — the cert
+#                       stops validating from this moment on; pass a date
+#                       already in the past to revoke it immediately
+#
+# "Revoke" here means re-signing the same existing key with a notAfter that
+# has already passed — there's no CRL/OCSP responder, this is a lab tool,
+# not a CA. Anything that checks certificate validity (`openssl x509
+# -checkend 0`, mkimage's own signature checks, ...) starts rejecting the
+# new cert immediately; the private key itself is untouched.
+set -euo pipefail
+
+prog="$(basename "$0")"
+
+die() {
+    echo "${prog}: $*" >&2
+    exit 1
+}
+
+usage() {
+    sed -n '2,43p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+# Re-sign $key into $out_crt as a self-signed cert with an explicit
+# validity window. Only `openssl ca -selfsign` supports arbitrary
+# -startdate/-enddate (including a past -enddate, which plain
+# `openssl req -x509 -days` refuses); it needs a (very) minimal CA
+# database, built fresh in a scratch dir each call.
+_selfsign() {
+    local key="$1" out_crt="$2" subject="$3" not_before="$4" not_after="$5"
+    local scratch
+    scratch="$(mktemp -d)"
+
+    : > "${scratch}/index.txt"
+    echo 01 > "${scratch}/serial"
+
+    # Bootstrap cert: carries the subject + public key into -selfsign's
+    # -ss_cert input. Its own (throwaway, 1-day) validity is discarded —
+    # -startdate/-enddate below replace it in the real output cert.
+    openssl req -batch -new -x509 -key "${key}" -subj "${subject}" -days 1 \
+        -out "${scratch}/bootstrap.crt"
+
+    cat >"${scratch}/ca.cnf" <<CNF
+[ca]
+default_ca = CA_default
+
+[CA_default]
+database        = ${scratch}/index.txt
+serial          = ${scratch}/serial
+new_certs_dir   = ${scratch}
+certificate     = ${scratch}/bootstrap.crt
+default_md      = sha256
+policy          = policy_any
+email_in_dn     = no
+copy_extensions = none
+unique_subject  = no
+
+[policy_any]
+commonName             = optional
+organizationName       = optional
+countryName            = optional
+stateOrProvinceName    = optional
+organizationalUnitName = optional
+emailAddress           = optional
+CNF
+
+    local start end
+    start="$(date -u -d "${not_before}" +%Y%m%d%H%M%SZ)" || die "bad date: ${not_before}"
+    end="$(date -u -d "${not_after}" +%Y%m%d%H%M%SZ)" || die "bad date: ${not_after}"
+
+    openssl ca -config "${scratch}/ca.cnf" -selfsign -keyfile "${key}" \
+        -ss_cert "${scratch}/bootstrap.crt" \
+        -startdate "${start}" -enddate "${end}" \
+        -batch -notext -out "${out_crt}"
+
+    rm -rf "${scratch}"
+}
+
+cmd_generate() {
+    local out_dir="./keys" name="dev-new" algo="rsa" bits="2048" curve="prime256v1"
+    local subject="" not_before="now" not_after="+3650 days"
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --out-dir) out_dir="$2"; shift 2 ;;
+        --name) name="$2"; shift 2 ;;
+        --algo) algo="$2"; shift 2 ;;
+        --bits) bits="$2"; shift 2 ;;
+        --curve) curve="$2"; shift 2 ;;
+        --subject) subject="$2"; shift 2 ;;
+        --not-before) not_before="$2"; shift 2 ;;
+        --not-after) not_after="$2"; shift 2 ;;
+        -h | --help) usage; exit 0 ;;
+        *) die "generate: unknown option '$1'" ;;
+        esac
+    done
+    [ -n "${subject}" ] || subject="/CN=${name}"
+
+    mkdir -p "${out_dir}"
+    local key="${out_dir}/${name}.key" crt="${out_dir}/${name}.crt"
+
+    case "${algo}" in
+    rsa)
+        openssl genpkey -algorithm RSA -out "${key}" \
+            -pkeyopt rsa_keygen_bits:"${bits}" -pkeyopt rsa_keygen_pubexp:65537
+        ;;
+    ec)
+        openssl genpkey -algorithm EC -out "${key}" \
+            -pkeyopt ec_paramgen_curve:"${curve}"
+        ;;
+    *) die "generate: unknown --algo '${algo}' (expected rsa or ec)" ;;
+    esac
+
+    _selfsign "${key}" "${crt}" "${subject}" "${not_before}" "${not_after}"
+
+    echo "generated ${key} + ${crt}"
+    openssl x509 -in "${crt}" -noout -subject -dates
+}
+
+cmd_revoke() {
+    local out_dir="./keys" name="dev-new" subject="" at="now"
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --out-dir) out_dir="$2"; shift 2 ;;
+        --name) name="$2"; shift 2 ;;
+        --subject) subject="$2"; shift 2 ;;
+        --at) at="$2"; shift 2 ;;
+        -h | --help) usage; exit 0 ;;
+        *) die "revoke: unknown option '$1'" ;;
+        esac
+    done
+    [ -n "${subject}" ] || subject="/CN=${name}"
+
+    local key="${out_dir}/${name}.key" crt="${out_dir}/${name}.crt"
+    [ -f "${key}" ] || die "revoke: no key at ${key} (nothing to revoke)"
+
+    _selfsign "${key}" "${crt}" "${subject}" "-1 day" "${at}"
+
+    echo "revoked ${crt} (notAfter shrunk to '${at}')"
+    openssl x509 -in "${crt}" -noout -subject -dates
+    if openssl x509 -in "${crt}" -noout -checkend 0; then
+        echo "[!] still valid as of now — pass --at with a past date to actually revoke it" >&2
+    fi
+}
+
+case "${1:-}" in
+generate)
+    shift
+    cmd_generate "$@"
+    ;;
+revoke)
+    shift
+    cmd_revoke "$@"
+    ;;
+-h | --help | "")
+    usage
+    ;;
+*)
+    die "unknown subcommand '$1' (expected 'generate' or 'revoke')"
+    ;;
+esac

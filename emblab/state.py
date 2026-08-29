@@ -1,11 +1,14 @@
 """Idempotency markers: hash-file based, no build-cache system.
 
-Two independent layers:
+Three independent layers:
 - image provisioning marker: skip re-provisioning a udocker container when
   its image manifest (base_image + provision commands) hasn't changed.
 - component build marker: skip rebuilding a component for a given target
-  when its resolved inputs (source ref, command, resolved vars) haven't
-  changed AND its declared artifacts already exist on disk.
+  when its resolved inputs (source ref, build command, resolved vars)
+  haven't changed AND its declared artifacts already exist on disk.
+- component setup marker (see ADR-011): tracks a component's optional
+  build.setup step separately from its build step — force one without the
+  other via `emblab build --setup-force` vs. `--force`.
 """
 
 import hashlib
@@ -61,6 +64,18 @@ def component_hash(component, resolved_vars, builddeps, patches):
             "patches": patches_hash(component.name, patches),
         }
     )
+
+
+def setup_hash(component, resolved_vars):
+    """Independent from component_hash() by design (see ADR-011) — a
+    component's optional build.setup step (e.g. one-time signing-key
+    generation) is tracked and force-rerun separately from its build step,
+    via `emblab build --setup-force` vs. `--force`."""
+    return _hash({"setup": component.build.setup, "vars": resolved_vars})
+
+
+def setup_marker_path(workspace, target_name, component_name):
+    return Path(workspace) / "state" / "components" / f"{target_name}__{component_name}.setup.hash"
 
 
 def image_marker_path(workspace, image_name):

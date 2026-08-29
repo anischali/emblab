@@ -3,10 +3,11 @@
 resolve target -> topo-sort its stack -> for each component in order:
 ensure the *stack entry's* declared image is provisioned (a component has
 no image of its own — see ADR-009), ensure its source is fetched, resolve
-its vars (which may reference already-built sibling artifacts), skip if
-unchanged, else install the stack entry's builddeps, render its build
-command and run it in-container, then collect its declared artifacts onto
-the host.
+its vars (which may reference already-built sibling artifacts), run its
+optional build.setup step if present (tracked/forced independently of the
+build step — see ADR-011), skip the build step if unchanged, else install
+the stack entry's builddeps, render its build command and run it
+in-container, then collect its declared artifacts onto the host.
 """
 
 import shutil
@@ -16,7 +17,7 @@ from . import containers, graph, manifests, sources, state, templating
 from .errors import BuildError
 
 
-def build(target_name, workspace, *, force=False, only=None, log=print):
+def build(target_name, workspace, *, force=False, setup_force=False, only=None, log=print):
     target = manifests.load_target(target_name)
     order = graph.topo_order(target)
 
@@ -48,6 +49,26 @@ def build(target_name, workspace, *, force=False, only=None, log=print):
 
         merged_vars = {**component.build.vars, **entry.vars}
         resolved_vars = templating.resolve_vars(merged_vars, env=env, artifacts=artifacts_by_component)
+
+        if component.build.setup:
+            setup_marker = state.setup_marker_path(workspace, target.name, component_name)
+            setup_current_hash = state.setup_hash(component, resolved_vars)
+            if not setup_force and state.marker_matches(setup_marker, setup_current_hash):
+                log(f"[{component_name}] setup unchanged, skipping")
+            else:
+                rendered_setup = templating.render_command(
+                    component.build.setup, resolved_vars=resolved_vars, env=env
+                )
+                containers.run(
+                    image,
+                    workspace,
+                    command=["sh", "-c", rendered_setup],
+                    workdir=f"{env['WORKSPACE']}/src/{component.source.path}",
+                    bind_mounts=[(env["WORKSPACE"], env["WORKSPACE"])],
+                    log=log,
+                )
+                state.write_marker(setup_marker, setup_current_hash)
+                log(f"[{component_name}] setup complete")
 
         marker_path = state.component_marker_path(workspace, target.name, component_name)
         current_hash = state.component_hash(component, resolved_vars, entry.builddeps, merged_patches)

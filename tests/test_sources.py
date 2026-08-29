@@ -13,7 +13,7 @@ def _component(*, submodules=False, patches=None):
         name="comp",
         description="",
         source=manifests.Source(git="https://example.invalid/comp.git", ref="main", path="comp", submodules=submodules),
-        build=manifests.Build(command="echo hi", vars={}, files=[], patches=patches or []),
+        build=manifests.Build(command="echo hi", setup="", vars={}, files=[], patches=patches or []),
         artifacts={},
     )
 

@@ -12,7 +12,7 @@ from pathlib import Path
 from . import state
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-# Shared helper scripts (generate-fitkeys, tsa-stamp, ...) usable by name
+# Shared helper scripts (fitkeys-ctl, tsa-stamp, ...) usable by name
 # from any component's build.command and from `emblab shell` — bind-mounted
 # onto /usr/local/bin (ahead of /usr/bin on Debian's default PATH, and
 # already on every base image's PATH) rather than copied per-component, so
@@ -120,7 +120,7 @@ def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, l
 
 def shell(image, workspace):
     """Interactive shell inside the provisioned container, for debugging a
-    build by hand. Same helpers/ bind mount as run() — generate-fitkeys,
+    build by hand. Same helpers/ bind mount as run() — fitkeys-ctl,
     tsa-stamp, etc. are on PATH here too."""
     args = ["run", f"--volume={HELPERS_DIR}:{HELPERS_MOUNT}", "--workdir=/", container_name(image), "sh"]
     subprocess.run(["udocker", *args], env=_udocker_env(workspace))

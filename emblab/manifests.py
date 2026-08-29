@@ -42,6 +42,7 @@ class Source:
 @dataclasses.dataclass
 class Build:
     command: str
+    setup: str  # optional one-time setup step, run/skipped/forced independently of command (see ADR-011); "" = none
     vars: dict
     files: list  # filenames, each backed by manifests/components/<component>/files/<filename>
     patches: list  # filenames (same files/ dir), git-applied in order onto a fresh clone
@@ -227,6 +228,7 @@ def load_component(name):
 
     build = Build(
         command=_require(build_data, "command", path),
+        setup=build_data.get("setup", ""),
         vars=build_vars,
         files=build_files,
         patches=build_patches,

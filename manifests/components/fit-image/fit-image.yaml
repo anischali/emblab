@@ -6,8 +6,10 @@ description: >
   and the .its /incbin/() literal filenames (Image, initramfs.cpio.gz) are
   transcribed from barebox-arm64-poc/generate-fit's generate_fit() and its
   real fit-image.its. UNSIGNED for now: the real project's command adds
-  `-F -r -k keys` to sign, which needs a signing-key component emblab
-  doesn't have yet (see CONTEXT.md).
+  `-F -r -k keys` to sign, which needs a `signature` node in the .its (see
+  CONTEXT.md's Next) — the `setup` step below only generates the signing
+  key/cert ahead of time via helpers/fitkeys-ctl (ADR-011's example use
+  case for a setup step), it isn't consumed by `command` yet.
 build:
   files:
     - fit-image.its
@@ -16,6 +18,13 @@ build:
     # ${<ramdisk-component>.<artifact>}.
     kernel: ""
     ramdisk: ""
+  # One-time signing-key generation — tracked/forced independently of
+  # `command` (see ADR-011): a rebuild after `keys/` already exists doesn't
+  # regenerate it (a fresh keypair would orphan anything already signed
+  # with the old one); `emblab build --setup-force` regenerates on demand
+  # (e.g. to rotate keys).
+  setup: >-
+    fitkeys-ctl generate --out-dir keys --name dev-new
   command: >-
     set -e;
     cp ${vars.kernel} Image;

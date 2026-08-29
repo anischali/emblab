@@ -43,7 +43,9 @@ def cmd_fetch(args):
 
 
 def cmd_build(args):
-    build_mod.build(args.target, WORKSPACE, force=args.force, only=args.only)
+    build_mod.build(
+        args.target, WORKSPACE, force=args.force, setup_force=args.setup_force, only=args.only
+    )
 
 
 def cmd_run(args):
@@ -129,6 +131,10 @@ def build_parser():
     p_build = sub.add_parser("build", help="build a target's full stack")
     p_build.add_argument("target")
     p_build.add_argument("--force", action="store_true", help="rebuild even if unchanged")
+    p_build.add_argument(
+        "--setup-force", action="store_true",
+        help="rerun each component's setup step even if unchanged (independent of --force)",
+    )
     p_build.add_argument("--only", default=None, help="build only up through this component")
     p_build.set_defaults(func=cmd_build)
 
