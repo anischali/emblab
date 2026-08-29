@@ -261,6 +261,36 @@ def test_build_patches_present_on_disk_loads_in_order(tmp_path, monkeypatch):
     assert component.build.patches == ["0001-a.patch", "0002-b.patch"]
 
 
+def test_source_submodules_defaults_to_false(tmp_path, monkeypatch):
+    manifests_dir = tmp_path / "manifests"
+    _write(manifests_dir / "images" / "img.yaml", "base_image: x\nprovision: []\n")
+    _write(
+        manifests_dir / "components" / "comp" / "comp.yaml",
+        "source:\n  git: x\n  ref: main\n"
+        "image: img\n"
+        "build:\n  vars: {}\n  command: echo hi\n"
+        "artifacts: {}\n",
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+    component = manifests.load_component("comp")
+    assert component.source.submodules is False
+
+
+def test_source_submodules_true_is_parsed(tmp_path, monkeypatch):
+    manifests_dir = tmp_path / "manifests"
+    _write(manifests_dir / "images" / "img.yaml", "base_image: x\nprovision: []\n")
+    _write(
+        manifests_dir / "components" / "comp" / "comp.yaml",
+        "source:\n  git: x\n  ref: main\n  submodules: true\n"
+        "image: img\n"
+        "build:\n  vars: {}\n  command: echo hi\n"
+        "artifacts: {}\n",
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+    component = manifests.load_component("comp")
+    assert component.source.submodules is True
+
+
 def test_sourceless_component_with_patches_raises_clear_error(tmp_path, monkeypatch):
     manifests_dir = tmp_path / "manifests"
     _write(manifests_dir / "images" / "img.yaml", "base_image: x\nprovision: []\n")

@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from emblab import build as build_mod
 from emblab import manifests
+from emblab import qemu as qemu_mod
 
 TARGET_NAME = "qemu-arm64-secureboot"
 
@@ -192,6 +193,36 @@ def test_build_plan_fit_target_resolves_kernel_and_ramdisk_and_copies_its(tmp_pa
     its_copy = tmp_path / "src" / "fit-image" / "fit-image.its"
     assert its_copy.exists()
     assert its_copy.read_text() == manifests.component_file_path("fit-image", "fit-image.its").read_text()
+
+
+def test_build_plan_edk2_barebox_target_resolves_bios_kernel_paths(tmp_path, monkeypatch):
+    """qemu-arm64-edk2-barebox chain-loads our own compiled edk2 as -bios and
+    barebox as -kernel (NOT bundled into the firmware volume — see
+    edk2.yaml's description for why not)."""
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+
+    target_name = "qemu-arm64-edk2-barebox"
+    target = manifests.load_target(target_name)
+    for entry in target.stack:
+        component = manifests.load_component(entry.component)
+        _precreate_source_and_artifacts(tmp_path, component)
+
+    def fake_ensure_source(workspace, component, **kwargs):
+        return Path(workspace) / "src" / component.source.path
+
+    with patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
+         patch("emblab.build.containers.ensure_image", return_value=None), \
+         patch("emblab.build.containers.run", return_value=None):
+        artifacts = build_mod.build(target_name, tmp_path)
+
+    assert set(artifacts) == {"edk2", "barebox"}
+
+    args = qemu_mod.resolve_args(target, tmp_path)
+    artifacts_root = str(tmp_path / "artifacts" / target_name)
+    bios_index = args.index("-bios") + 1
+    kernel_index = args.index("-kernel") + 1
+    assert args[bios_index] == f"{artifacts_root}/edk2/fd"
+    assert args[kernel_index] == f"{artifacts_root}/barebox/images/barebox-dt-2nd.img"
 
 
 def test_build_files_content_change_triggers_rebuild(tmp_path, monkeypatch):

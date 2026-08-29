@@ -1,0 +1,39 @@
+name: qemu-arm64-edk2-barebox
+description: >
+  Same boot flow as qemu-arm64-uefi-barebox (QEMU args transcribed
+  verbatim from barebox-arm64-poc/generate-fit's currently-active boot
+  invocation), except -bios is emblab's own freshly-built edk2
+  (ArmVirtQemu QEMU_EFI.fd) instead of the host's
+  /usr/share/edk2/aarch64/QEMU_EFI.silent.fd package. barebox is NOT
+  bundled inside the firmware volume — QEMU loads edk2 as -bios and
+  barebox as -kernel, two separate things, same as
+  qemu-arm64-uefi-barebox. A true bundled build (a custom BDS driver
+  finding barebox.efi embedded in the FV by GUID) needs real driver
+  source that doesn't exist anywhere in barebox-arm64-poc/edk to
+  transcribe — see edk2.yaml's description and CONTEXT.md.
+arch: arm64
+stack:
+  - component: edk2
+    vars: {}
+  - component: barebox
+    vars:
+      defconfig: efi_v8_defconfig
+qemu:
+  binary: qemu-system-aarch64
+  args:
+    - "-cpu"
+    - "cortex-a57"
+    - "-M"
+    - "virt,acpi=off"
+    - "-m"
+    - "1G"
+    - "-serial"
+    - "mon:stdio"
+    - "-device"
+    - "virtio-rng-pci"
+    - "-device"
+    - "ramfb"
+    - "-bios"
+    - "${edk2.fd}"
+    - "-kernel"
+    - "${barebox.images}/barebox-dt-2nd.img"

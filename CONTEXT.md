@@ -13,7 +13,9 @@ override + directory-valued artifacts + `${env.ARCH}` (ADR-006); and a
 Yocto-style per-component directory layout
 (`manifests/components/<name>/<name>.yaml` + a sibling `files/`) plus
 `build.patches`, git-applied in order onto a fresh clone (ADR-007).
-`optee-os` now carries the first real one — see Proven.
+`optee-os` now carries the first real one — see Proven. `source.submodules`
+(ADR-008) lets a component's clone run `git submodule update --init
+--recursive` — needed for the new `edk2` component.
 
 ## Proven
 - 2026-08-29: `bash bootstrap.sh` — venv + `pip install -e ".[dev]"` +
@@ -84,6 +86,27 @@ Yocto-style per-component directory layout
   tree for both AArch32/AArch64, same arch-naming mismatch already hit for
   OP-TEE. **Both `u-boot.yaml` and this target are UNVERIFIED** — offline
   dry-run only (`pytest`), no real build attempted yet.
+- 2026-08-29: `tf-a` and `u-boot` both build host tools (`cert_create`,
+  `mkimage`'s FIT signing) that link against GnuTLS — added
+  `libgnutls28-dev` to both components' `build.builddeps`.
+- 2026-08-29: New `edk2` component (ADR-008's `source.submodules: true` —
+  `CryptoPkg` vendors OpenSSL/mbedTLS as submodules, needed since
+  `ArmVirtQemu.dsc` pulls in `CryptoPkg`), transcribed from
+  `barebox-arm64-poc/edk/build.run` + its `containers/Dockerfile`
+  (`iasl`/`uuid-dev`/`cmake` `builddeps`). **Investigated and could not
+  build a "barebox bundled into edk2" target**: `barebox-arm64-poc/edk`'s
+  own `EFI_CRASH_COURSE.md` (section 16) *describes* a custom `FvBootDxe`
+  BDS driver that finds a `FILE APPLICATION` PE32 section by GUID in
+  `ArmVirtQemuFvMain.fdf.inc` — but `git status`/`git log`/branches/
+  stash/reflog on that project's local `edk2` checkout all confirm it's a
+  plain, unmodified upstream clone at the commit pinned in `edk2.commit`;
+  no such driver source or `.fdf.inc` patch exists anywhere in that repo
+  to transcribe. Asked the user how to proceed; chose NOT to author
+  untested custom DXE driver C code — new target `qemu-arm64-edk2-barebox`
+  instead chain-loads exactly like `qemu-arm64-uefi-barebox` already does
+  (`-bios ${edk2.fd}` from our own compiled edk2, `-kernel` for barebox as
+  two separate QEMU-loaded things, not one bundled firmware image).
+  `edk2.yaml` and this target are both UNVERIFIED — offline dry-run only.
 
 ## In progress
 Nothing in flight.
@@ -108,7 +131,14 @@ Nothing in flight.
    clone, same starting point `barebox.yaml`/`linux-kernel.yaml` began
    from; validate after `qemu-arm64-secureboot` itself is confirmed
    working, since they share `optee-os`/`tf-a`.
-6. If a second target architecture is attempted (see Open questions),
+6. `emblab build qemu-arm64-edk2-barebox` — `edk2.yaml`'s build command
+   (submodule init + `edksetup.sh`/`BaseTools`/`build -p ArmVirtQemu.dsc`)
+   is UNVERIFIED against a real clone; expect real wall-clock time
+   (CryptoPkg's vendored OpenSSL/mbedTLS submodules are large).
+   `EFI_CRASH_COURSE.md`'s described `FvBootDxe` bundling driver still
+   doesn't exist anywhere real — if a true bundled build is wanted later,
+   it needs someone to actually author and test that DXE driver first.
+7. If a second target architecture is attempted (see Open questions),
    revisit `uroot-ramdisk.yaml`'s hardcoded `GOARCH=arm64` — ADR-006
    deliberately left it hardcoded rather than wiring it to `$ARCH`, since
    Go's arch names don't always match Linux kernel `ARCH=` names and that

@@ -1,5 +1,7 @@
 """Fetch component source trees: shallow git clone/checkout at a pinned ref,
-then apply the component's declared build.patches on top (Yocto-style: each
+optionally initialize its git submodules (source.submodules: true — needed
+by e.g. edk2's CryptoPkg, which vendors OpenSSL/mbedTLS as submodules), then
+apply the component's declared build.patches on top (Yocto-style: each
 component owns a manifests/components/<name>/files/ directory holding its
 own patches, applied in the order listed).
 
@@ -37,6 +39,16 @@ def _resolve_remote_ref(url, ref):
     )
     lines = result.stdout.strip().splitlines()
     return lines[0].split()[0] if lines else None
+
+
+def _init_submodules(dest, component, *, log=print):
+    if not component.source.submodules:
+        return
+    log(f"[{component.name}] initializing git submodules")
+    subprocess.run(
+        ["git", "submodule", "update", "--init", "--recursive", "--depth", "1"],
+        cwd=dest, check=True,
+    )
 
 
 def _apply_patches(dest, component, *, log=print):
@@ -91,6 +103,7 @@ def ensure_source(workspace, component, *, log=print):
     )
     log(f"[{component.name}] cloned {component.source.git}@{component.source.ref} -> {dest}")
 
+    _init_submodules(dest, component, log=log)
     _apply_patches(dest, component, log=log)
     state.write_marker(patches_marker, current_patches_hash)
 

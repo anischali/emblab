@@ -1,0 +1,46 @@
+name: edk2
+description: >
+  UNVERIFIED build command — transcribed from barebox-arm64-poc/edk/build.run
+  (the PACKAGES_PATH/edksetup.sh/BaseTools/build invocation) and
+  barebox-arm64-poc/edk/containers/Dockerfile (the package list TianoCore's
+  own build container installs). Builds vanilla upstream edk2's ArmVirtQemu
+  platform only. Bundling a payload (e.g. barebox) into the firmware volume
+  needs a custom BDS driver + a patched ArmVirtQemuFvMain.fdf.inc that
+  barebox-arm64-poc/edk documents as a *design* (EFI_CRASH_COURSE.md
+  section 16 describes a "FvBootDxe" driver reading a FILE APPLICATION
+  section by GUID) but does not actually implement anywhere in that
+  checkout — confirmed via `git status`/`git log`/branches/stash/reflog on
+  the local edk2 clone there: a plain, unmodified upstream checkout at the
+  pinned commit in edk2.commit. See CONTEXT.md for what emblab does
+  instead until that driver exists somewhere real to transcribe.
+  ArmVirtQemu.dsc doesn't reference edk2-platforms/edk2-non-osi (those are
+  only in build.run's PACKAGES_PATH for other platforms), so this
+  component clones just edk2 itself.
+source:
+  git: https://github.com/tianocore/edk2.git
+  ref: master
+  path: edk2
+  # CryptoPkg vendors OpenSSL/mbedTLS as git submodules (CryptoPkg/Library/
+  # {OpensslLib/openssl,MbedTlsLib/mbedtls}) — ArmVirtQemu.dsc pulls in
+  # CryptoPkg components, so a build without these fails.
+  submodules: true
+image: gnu-aarch64
+build:
+  # iasl (ACPI table compiler) and uuid-dev are edk2-specific, not needed by
+  # anything else sharing gnu-aarch64; cmake builds the vendored crypto
+  # submodules. python3-pip/python3 are already in gnu-aarch64's base set.
+  builddeps:
+    - iasl
+    - uuid-dev
+    - cmake
+  vars: {}
+  command: >-
+    set -e;
+    export PACKAGES_PATH=$PWD;
+    export GCC5_AARCH64_PREFIX=$CROSS_COMPILE;
+    pip3 install --break-system-packages -r pip-requirements.txt;
+    . ./edksetup.sh;
+    make -C BaseTools;
+    build -a AARCH64 -t GCC5 -b DEBUG -p ArmVirtPkg/ArmVirtQemu.dsc
+artifacts:
+  fd: Build/ArmVirtQemu-AARCH64/DEBUG_GCC5/FV/QEMU_EFI.fd

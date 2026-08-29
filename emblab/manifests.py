@@ -34,6 +34,7 @@ class Source:
     git: str  # None for a sourceless (purely local packaging) component
     ref: str  # None for a sourceless component
     path: str  # always set — the workdir segment under workspace/src/
+    submodules: bool = False  # git submodule update --init --recursive after cloning
 
 
 @dataclasses.dataclass
@@ -185,6 +186,7 @@ def load_component(name):
             git=_require(source_data, "git", path),
             ref=_require(source_data, "ref", path),
             path=source_data.get("path", name),
+            submodules=bool(source_data.get("submodules", False)),
         )
 
     build_data = _require(data, "build", path)
