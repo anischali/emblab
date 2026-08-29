@@ -14,6 +14,12 @@ source:
   path: u-boot
 image: gnu-aarch64
 build:
+  # u-boot's host tools (tools/mkimage's FIT signing support, pulled in by
+  # qemu_arm64_defconfig) link against GnuTLS too — same reasoning as
+  # tf-a.yaml's builddeps, not in gnu-aarch64's shared package set since no
+  # other component needs it.
+  builddeps:
+    - libgnutls28-dev
   vars:
     defconfig: qemu_arm64_defconfig
   # ARCH is hardcoded to "arm" (not ${env.ARCH}, which would resolve to

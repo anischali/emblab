@@ -12,6 +12,12 @@ source:
   path: trusted-firmware-a
 image: gnu-aarch64
 build:
+  # GENERATE_COT=1 below builds cert_create, which links against GnuTLS for
+  # X.509 certificate generation — not in gnu-aarch64's shared package set
+  # since no other component needs it (same reasoning as fit-image's
+  # u-boot-tools builddep, see ADR-006).
+  builddeps:
+    - libgnutls28-dev
   vars:
     plat: qemu
     # Empty by default (no secure payload). A target that wants OP-TEE as
