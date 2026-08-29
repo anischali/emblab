@@ -268,6 +268,19 @@ Nothing in flight.
    proved the pattern generalizes cleanly: a new image + component (if the
    arch needs one not covered by an existing component) + target manifest,
    no changes needed to already-shared components (ADR-009's whole point).
+9. `barebox.yaml` gained `vars.extra_conf` (empty by default, same
+   conditionally-populated-var trick as `tf-a.yaml`'s `bl32_flags`): a
+   target's stack entry can point it at one or more Kconfig fragment files
+   (space-separated), merged onto the defconfig via barebox's own
+   `scripts/kconfig/merge_config.sh -m` before the real build — motivating
+   use case is a FIT image keystore public-key fragment
+   (`${fit-image.files}/keystore.cfg`) so barebox can verify a signed FIT
+   image, but `fit-image` doesn't produce a signed image or a keystore
+   fragment yet (it's still UNSIGNED, see `fit-image.yaml`'s description —
+   that needs its own signing-key component first). The merge mechanism
+   itself is offline-tested (`tests/test_build_plan.py`'s two
+   `test_barebox_extra_conf_*` cases) but **UNVERIFIED against a real
+   build** — no target actually sets `extra_conf` yet.
 
 ## Open questions
 - Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox`,

@@ -161,6 +161,45 @@ def test_build_plan_skips_unchanged_component_on_second_run(tmp_path, monkeypatc
     assert second_run_count == first_run_count  # nothing rebuilt on the second, unchanged run
 
 
+def test_barebox_extra_conf_defaults_to_noop_merge():
+    """No target sets vars.extra_conf -> the merge_config.sh step is a
+    literal shell no-op (empty -n check), never actually invoked."""
+    component = manifests.load_component("barebox")
+    merged_vars = {**component.build.vars, "arch": "arm64"}
+    resolved_vars = templating.resolve_vars(merged_vars, env={}, artifacts={})
+    rendered = templating.render_command(
+        component.build.command, resolved_vars=resolved_vars, env={"JOBS": "4"}
+    )
+    expected = (
+        "make ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE efi_v8_defconfig &&"
+        " if [ -n \"\" ]; then ./scripts/kconfig/merge_config.sh -m .config ; fi &&"
+        " make ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE -j4"
+    )
+    assert rendered == expected
+
+
+def test_barebox_extra_conf_set_by_target_merges_fragment():
+    """A target's stack entry can point vars.extra_conf at another
+    component's already-built artifact — e.g. a FIT image keystore
+    fragment — and it lands inside the merge_config.sh invocation."""
+    component = manifests.load_component("barebox")
+    merged_vars = {
+        **component.build.vars,
+        "arch": "arm64",
+        "extra_conf": "${fit-image.files}/keystore.cfg",
+    }
+    resolved_vars = templating.resolve_vars(
+        merged_vars, env={}, artifacts={"fit-image": {"files": "/work/artifacts/fit-image"}}
+    )
+    rendered = templating.render_command(
+        component.build.command, resolved_vars=resolved_vars, env={"JOBS": "4"}
+    )
+    assert (
+        "./scripts/kconfig/merge_config.sh -m .config /work/artifacts/fit-image/keystore.cfg"
+        in rendered
+    )
+
+
 def test_build_plan_fit_target_resolves_kernel_and_ramdisk_and_copies_its(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "cpu_count", lambda: 4)
 

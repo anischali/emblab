@@ -30,8 +30,20 @@ build:
   # asked for it — see ADR-006/ADR-009.
   vars:
     defconfig: efi_v8_defconfig
+    # Empty by default (plain defconfig, no extras) — same conditionally-
+    # populated-var trick as tf-a.yaml's bl32_flags/edk2.yaml's
+    # fv_boot_app_flag. A target that wants extra Kconfig merged on top of
+    # the defconfig (e.g. a FIT image keystore public key) sets this to one
+    # or more file paths, space-separated, each merged in order via
+    # barebox's own scripts/kconfig/merge_config.sh — e.g.
+    # "${fit-image.files}/keystore.cfg". Paths are merged with `-m` (merge
+    # only, no immediate make invocation); the following real build already
+    # re-syncs .config on its own via Kbuild's normal auto.conf dependency,
+    # so no extra oldconfig/olddefconfig step is needed.
+    extra_conf: ""
   command: >-
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
+    if [ -n "${vars.extra_conf}" ]; then ./scripts/kconfig/merge_config.sh -m .config ${vars.extra_conf}; fi &&
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS}
 artifacts:
   # barebox's build drops several files into images/ (barebox-dt-2nd.img
