@@ -1,0 +1,52 @@
+From b23c4cf04e331faea0e0e18074ff9a5bfcede940 Mon Sep 17 00:00:00 2001
+From: Chali Anis <chalianis1@gmail.com>
+Date: Tue, 7 Oct 2025 03:01:11 -0400
+Subject: [PATCH] core: hwrng: add a dummy hwrng for test purposes on qemu.
+
+Signed-off-by: Chali Anis <chalianis1@gmail.com>
+---
+ core/crypto.mk   |  6 ++++++
+ core/pta/hwrng.c | 13 +++++++++++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/core/crypto.mk b/core/crypto.mk
+index f19e97c7626..44595a74d22 100644
+--- a/core/crypto.mk
++++ b/core/crypto.mk
+@@ -79,6 +79,12 @@ endif
+ # Otherwise, you need to implement hw_get_random_bytes() for your platform
+ CFG_WITH_SOFTWARE_PRNG ?= y
+ 
++# dummy hwrng
++# this config adds a dummy hwrng to be used 
++# with qemu to expose a hwrng interface to
++# bootloaders or other non secure firmwares
++CFG_WITH_DUMMY_HWRNG ?= n
++
+ # Define the maximum size, in bits, for big numbers in the TEE core (privileged
+ # layer).
+ # This value is an upper limit for the key size in any cryptographic algorithm
+diff --git a/core/pta/hwrng.c b/core/pta/hwrng.c
+index ed089a10b1a..76bc79c3dd8 100644
+--- a/core/pta/hwrng.c
++++ b/core/pta/hwrng.c
+@@ -19,6 +19,19 @@
+ /* This PTA only works with hardware random number generators */
+ static_assert(!IS_ENABLED(CFG_WITH_SOFTWARE_PRNG));
+ 
++#if defined(CFG_WITH_DUMMY_HWRNG)
++TEE_Result hw_get_random_bytes(void *buf, size_t len)
++{
++    uint8_t *b = buf;
++    for (size_t i = 0; i < len; i++) {
++        uint64_t cnt = read_cntpct();  // read QEMU virtual timer
++        b[i] = (uint8_t)(cnt & 0xFF);
++    }
++
++    return TEE_SUCCESS;
++}
++#endif
++
+ static TEE_Result rng_get_entropy(uint32_t types,
+ 				  TEE_Param params[TEE_NUM_PARAMS])
+ {

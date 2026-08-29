@@ -10,6 +10,12 @@ source:
   path: optee-os
 image: gnu-aarch64
 build:
+  # upstream optee_os has no CFG_WITH_DUMMY_HWRNG at all — CFG_WITH_DUMMY_HWRNG=y
+  # below is meaningless without it. This patch adds the config plus a dummy
+  # hw_get_random_bytes() (reads the QEMU virtual timer) so CFG_WITH_SOFTWARE_PRNG=n
+  # has a real hwrng to satisfy it on qemu — see ADR-007.
+  patches:
+    - 0001-core-hwrng-add-dummy-hwrng-for-qemu.patch
   vars:
     platform: vexpress-qemu_armv8a
   command: >-
