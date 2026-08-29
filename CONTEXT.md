@@ -164,6 +164,21 @@ forking the component or affecting targets that don't want it.
   **The hand-reconstructed patch is UNVERIFIED against a real build** —
   `git apply --check` only proves it applies; it doesn't prove the
   resulting firmware builds or actually boots `barebox` via `FvBootDxe`.
+- 2026-08-29: `bootstrap.sh`'s `pip install -e ".[dev]"` was hanging
+  indefinitely on this machine once a real build had populated `workspace/`.
+  Root cause: `pyproject.toml`'s `[tool.setuptools.packages.find]`
+  auto-discovery calls `os.walk(where, followlinks=True)` over the whole
+  project root, and `workspace/udocker/containers/.../ROOT` (a full
+  udocker/PRoot container rootfs, several GB, full of symlinks) sent that
+  walk into an effectively endless traversal — confirmed with
+  `faulthandler.dump_traceback_later`, stack bottomed out in
+  `setuptools/discovery.py`'s `_find_iter` inside `os.walk`. Fixed by
+  switching to an explicit `packages = ["emblab"]` in `pyproject.toml`:
+  this project only ever has the one real package, so auto-discovery
+  bought nothing but the whole-tree walk. Verified: fresh-venv
+  `pip install -e ".[dev]"` now completes in ~4.5s against a checkout with
+  a fully-populated `workspace/`; `emblab list` and `pytest tests/`
+  (63/63) both still pass.
 
 ## In progress
 Nothing in flight.

@@ -15,8 +15,14 @@ dev = ["pytest>=7.0"]
 [project.scripts]
 emblab = "emblab.cli:main"
 
-[tool.setuptools.packages.find]
-include = ["emblab*"]
+[tool.setuptools]
+# Explicit package list, not `packages.find`: setuptools' auto-discovery
+# walks the whole project root with os.walk(..., followlinks=True), which
+# once a real build has populated workspace/ (a full udocker container
+# rootfs full of symlinks, several GB) can take forever or never return —
+# this is what made `pip install -e ".[dev]"` in bootstrap.sh appear to
+# hang indefinitely on a machine that had already run a build.
+packages = ["emblab"]
 
 [tool.pytest.ini_options]
 # workspace/ is gitignored and disposable, but once a build has actually run
