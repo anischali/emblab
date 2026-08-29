@@ -1,7 +1,13 @@
 # ADR-006: Per-component builddeps, per-target image override, target.arch as a template token, directory artifacts
 
 ## Status
-Accepted
+Accepted. Partially superseded by ADR-009: `build.builddeps` and a
+component's own `image:` default are gone (a target's stack entry now
+owns both outright, not as an override of a component default), and
+`uroot-ramdisk.yaml`'s `GOARCH` (see below) is now a no-default
+`build.vars` entry a target must set, not a hardcoded literal. The
+`${env.ARCH}` mechanism and directory-artifact copying this ADR
+introduced are unchanged.
 
 ## Context
 Building out the FIT-image demo (ADR-005) surfaced four related frictions,

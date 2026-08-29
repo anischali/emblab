@@ -15,7 +15,12 @@ Yocto-style per-component directory layout
 `build.patches`, git-applied in order onto a fresh clone (ADR-007).
 `optee-os` now carries the first real one — see Proven. `source.submodules`
 (ADR-008) lets a component's clone run `git submodule update --init
---recursive` — needed for the new `edk2` component.
+--recursive` — needed for the new `edk2` component. As of ADR-009, a
+component declares no `image:`, no `build.builddeps`, and no default for
+any arch-flavored var (`vars.arch`, `vars.goarch`, `vars.edk2_arch`) —
+every target's stack entry sets all of these explicitly per component.
+`build.builddeps` mentioned in earlier Proven entries below now means
+"the target's stack-entry `builddeps:`", not a component field.
 
 ## Proven
 - 2026-08-29: `bash bootstrap.sh` — venv + `pip install -e ".[dev]"` +
@@ -107,6 +112,26 @@ Yocto-style per-component directory layout
   (`-bios ${edk2.fd}` from our own compiled edk2, `-kernel` for barebox as
   two separate QEMU-loaded things, not one bundled firmware image).
   `edk2.yaml` and this target are both UNVERIFIED — offline dry-run only.
+- 2026-08-29: **ADR-009**: moved `image:`, `build.builddeps`, and every
+  hardcoded/defaulted arch value out of every component manifest and onto
+  the target's stack entry, per explicit direction ("the components need
+  to be agnostic of the aarch or image[,] the targets need to set the
+  aarch and the images and also the target will add the builddeps").
+  `Component`/`Build` lost `image`/`builddeps` entirely;
+  `load_component()` now rejects either field with a clear error.
+  `StackEntry.image` is required (no more component-level fallback);
+  `StackEntry.builddeps` is new. Components that reference an arch
+  (`barebox`/`linux-kernel`: `vars.arch`; `u-boot`: `vars.arch`;
+  `uroot-ramdisk`: `vars.goarch`; `edk2`: `vars.edk2_arch`) declare **no
+  default** for it — a target that forgets raises a clear `TemplateError`
+  at build time (`resolve_vars`'s existing "unknown token" check, no new
+  validation needed). Also fixed a real driver gap surfaced by `edk2.yaml`
+  parameterizing its own `artifacts: fd:` path with `${vars.platform}-
+  ${vars.edk2_arch}`: `build.py` never rendered `vars./env.` tokens in
+  `artifacts:` values, only in `build.command` — now it does both.
+  `tf-a.yaml`'s hardcoded `CROSS_COMPILE=aarch64-linux-gnu-` was also
+  changed to the real `$CROSS_COMPILE` env var, matching every other
+  component. All 5 targets + 8 components updated; 57/57 tests pass.
 
 ## In progress
 Nothing in flight.
@@ -138,11 +163,10 @@ Nothing in flight.
    `EFI_CRASH_COURSE.md`'s described `FvBootDxe` bundling driver still
    doesn't exist anywhere real — if a true bundled build is wanted later,
    it needs someone to actually author and test that DXE driver first.
-7. If a second target architecture is attempted (see Open questions),
-   revisit `uroot-ramdisk.yaml`'s hardcoded `GOARCH=arm64` — ADR-006
-   deliberately left it hardcoded rather than wiring it to `$ARCH`, since
-   Go's arch names don't always match Linux kernel `ARCH=` names and that
-   translation isn't worth building until it's actually needed.
+7. If a second target architecture is attempted (see Open questions), it's
+   now just a matter of adding a new target manifest with the right
+   `vars.arch`/`vars.goarch`/`vars.edk2_arch` values per stack entry
+   (ADR-009) — no component edits needed, that was the whole point.
 
 ## Open questions
 - Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox` once a

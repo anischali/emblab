@@ -4,20 +4,16 @@ description: >
   wire in OP-TEE and any BL33 provider (barebox/u-boot/edk2) — this is a
   pure component, it never references another component itself; only a
   target's stack vars may do that. Build flags transcribed verbatim from
-  barebox-arm64-poc/build.sh. Ref pinned to 'master' for now — pin an exact
-  tag once validated end-to-end (see CONTEXT.md).
+  barebox-arm64-poc/build.sh, except CROSS_COMPILE=aarch64-linux-gnu- was
+  changed to $CROSS_COMPILE (the real shell env var from whichever image
+  the target picks) — components stay agnostic of the toolchain/arch, see
+  ADR-009. Ref pinned to 'master' for now — pin an exact tag once
+  validated end-to-end (see CONTEXT.md).
 source:
   git: https://git.trustedfirmware.org/TF-A/trusted-firmware-a.git
   ref: master
   path: trusted-firmware-a
-image: gnu-aarch64
 build:
-  # GENERATE_COT=1 below builds cert_create, which links against GnuTLS for
-  # X.509 certificate generation — not in gnu-aarch64's shared package set
-  # since no other component needs it (same reasoning as fit-image's
-  # u-boot-tools builddep, see ADR-006).
-  builddeps:
-    - libgnutls28-dev
   vars:
     plat: qemu
     # Empty by default (no secure payload). A target that wants OP-TEE as
@@ -36,7 +32,7 @@ build:
     bl33_flags: "ARM_LINUX_KERNEL_AS_BL33=1"
     bl33: ""
   command: >-
-    make -j${env.JOBS} CROSS_COMPILE=aarch64-linux-gnu- PLAT=${vars.plat} DEBUG=1 -B
+    make -j${env.JOBS} CROSS_COMPILE=$CROSS_COMPILE PLAT=${vars.plat} DEBUG=1 -B
     RESET_TO_BL31=1 LOG_LEVEL=30
     ${vars.bl32_flags}
     BL32_RAM_LOCATION=tdram SPD=opteed GENERATE_COT=1 all fip

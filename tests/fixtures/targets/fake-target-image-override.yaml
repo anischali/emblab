@@ -1,9 +1,0 @@
-description: fixture target overriding fake-a's image to fake-image-2
-arch: fake
-stack:
-  - component: fake-a
-    image: fake-image-2
-    vars: {}
-qemu:
-  binary: "true"
-  args: []

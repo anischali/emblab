@@ -14,10 +14,22 @@ description: >
 arch: arm64
 stack:
   - component: edk2
-    vars: {}
+    image: gnu-aarch64
+    # iasl (ACPI table compiler) and uuid-dev are edk2-specific, and cmake
+    # builds CryptoPkg's vendored crypto submodules — not in gnu-aarch64's
+    # shared package set since no other component sharing that image needs
+    # them (see ADR-009).
+    builddeps:
+      - iasl
+      - uuid-dev
+      - cmake
+    vars:
+      edk2_arch: AARCH64
   - component: barebox
+    image: gnu-aarch64
     vars:
       defconfig: efi_v8_defconfig
+      arch: arm64
 qemu:
   binary: qemu-system-aarch64
   args:

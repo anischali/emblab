@@ -3,7 +3,6 @@ source:
   git: https://example.invalid/b.git
   ref: main
   path: fake-b
-image: fake-image
 build:
   vars:
     input: ""

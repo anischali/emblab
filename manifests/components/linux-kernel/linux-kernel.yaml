@@ -10,10 +10,12 @@ source:
   git: https://github.com/torvalds/linux.git
   ref: master
   path: linux
-image: gnu-aarch64
 build:
   files:
     - tiny.cfg
+  # vars.arch has no default here — arch is a target concern, not a
+  # component one (see ADR-009); every target's stack entry for
+  # linux-kernel must set it.
   vars:
     defconfig: defconfig
     # Space-separated build.files entries to actually merge in — a target
@@ -21,9 +23,13 @@ build:
     fragments: tiny.cfg
   command: >-
     set -e;
-    make ARCH=${env.ARCH} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig};
+    make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig};
     ./scripts/kconfig/merge_config.sh -m .config ${vars.fragments};
-    make ARCH=${env.ARCH} CROSS_COMPILE=$CROSS_COMPILE olddefconfig;
-    make ARCH=${env.ARCH} CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS} Image
+    make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE olddefconfig;
+    make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS} Image
 artifacts:
-  image: arch/arm64/boot/Image
+  # arch/<ARCH>/boot/Image is itself arch-dependent (e.g. arch/riscv/boot/
+  # Image) — templated the same as the command, via the same vars.arch a
+  # target must set (build.py resolves vars./env. tokens in artifacts:
+  # paths too, not just build.command).
+  image: arch/${vars.arch}/boot/Image

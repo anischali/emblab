@@ -43,14 +43,17 @@ def patches_hash(component_name, patches):
     return _hash([(filename, _files_content_hash(component_name, [filename])[filename]) for filename in patches])
 
 
-def component_hash(component, resolved_vars):
+def component_hash(component, resolved_vars, builddeps):
+    """`builddeps` comes from the target's stack entry, not the component —
+    see ADR-009 — so it's a parameter here exactly like `resolved_vars`
+    already is, not read off `component.build`."""
     return _hash(
         {
             "source": {"git": component.source.git, "ref": component.source.ref},
             "command": component.build.command,
             "vars": resolved_vars,
             "files": _files_content_hash(component.name, component.build.files),
-            "builddeps": sorted(component.build.builddeps),
+            "builddeps": sorted(builddeps),
             "patches": patches_hash(component.name, component.build.patches),
         }
     )

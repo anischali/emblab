@@ -2,8 +2,10 @@ description: fixture target wiring fake-b's input to fake-a's artifact
 arch: fake
 stack:
   - component: fake-a
+    image: fake-image
     vars: {}
   - component: fake-b
+    image: fake-image
     vars:
       input: ${fake-a.out}
 qemu:

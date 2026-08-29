@@ -110,8 +110,11 @@ def resolve_vars(raw_vars, *, env, artifacts):
 
 
 def render_command(command, *, resolved_vars, env):
-    """Render a component's build.command template. Only vars.* and env.*
-    tokens are legal here — component-artifact tokens must already have been
-    folded into resolved_vars by resolve_vars().
+    """Render a build.command template, or any other single component-owned
+    string that should only ever see vars.*/env.* tokens — e.g. an
+    artifacts: path built from ${vars.X}. Component-artifact tokens must
+    already have been folded into resolved_vars by resolve_vars(); a bare
+    <component>.<key> token here is always an error (artifacts={}), since a
+    component's own strings must never reference another component.
     """
     return resolve_value(command, merged_vars=resolved_vars, env=env, artifacts={})

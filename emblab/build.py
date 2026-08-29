@@ -1,10 +1,12 @@
 """Orchestrates `emblab build <target>`:
 
 resolve target -> topo-sort its stack -> for each component in order:
-ensure its image is provisioned, ensure its source is fetched, resolve its
-vars (which may reference already-built sibling artifacts), skip if
-unchanged, else render its build command and run it in-container, then
-collect its declared artifacts onto the host.
+ensure the *stack entry's* declared image is provisioned (a component has
+no image of its own — see ADR-009), ensure its source is fetched, resolve
+its vars (which may reference already-built sibling artifacts), skip if
+unchanged, else install the stack entry's builddeps, render its build
+command and run it in-container, then collect its declared artifacts onto
+the host.
 """
 
 import shutil
@@ -34,7 +36,7 @@ def build(target_name, workspace, *, force=False, only=None, log=print):
     for component_name in order:
         component = manifests.load_component(component_name)
         entry = entries_by_component[component_name]
-        image = manifests.load_image(entry.image or component.image)
+        image = manifests.load_image(entry.image)
 
         containers.ensure_image(image, workspace, log=log)
         src_dir = sources.ensure_source(workspace, component, log=log)
@@ -43,13 +45,13 @@ def build(target_name, workspace, *, force=False, only=None, log=print):
         resolved_vars = templating.resolve_vars(merged_vars, env=env, artifacts=artifacts_by_component)
 
         marker_path = state.component_marker_path(workspace, target.name, component_name)
-        current_hash = state.component_hash(component, resolved_vars)
+        current_hash = state.component_hash(component, resolved_vars, entry.builddeps)
         have_artifacts = state.artifacts_exist(workspace, target.name, component_name, component.artifacts)
 
         if not force and have_artifacts and state.marker_matches(marker_path, current_hash):
             log(f"[{component_name}] unchanged, skipping build")
         else:
-            containers.ensure_builddeps(image, component, workspace, log=log)
+            containers.ensure_builddeps(image, component_name, entry.builddeps, workspace, log=log)
 
             for filename in component.build.files:
                 file_src = manifests.component_file_path(component_name, filename)
@@ -70,7 +72,8 @@ def build(target_name, workspace, *, force=False, only=None, log=print):
             dest_dir = artifacts_root / component_name
             dest_dir.mkdir(parents=True, exist_ok=True)
             for key, rel_path in component.artifacts.items():
-                src = src_dir / rel_path
+                resolved_rel_path = templating.render_command(rel_path, resolved_vars=resolved_vars, env=env)
+                src = src_dir / resolved_rel_path
                 dst = dest_dir / key
                 if not src.exists():
                     raise BuildError(

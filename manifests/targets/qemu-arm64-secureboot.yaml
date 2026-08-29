@@ -8,12 +8,22 @@ description: >
 arch: arm64
 stack:
   - component: optee-os
+    image: gnu-aarch64
     vars:
       platform: vexpress-qemu_armv8a
   - component: barebox
+    image: gnu-aarch64
     vars:
       defconfig: multi_v8_defconfig
+      arch: arm64
   - component: tf-a
+    image: gnu-aarch64
+    # GENERATE_COT=1 in tf-a's command builds cert_create, which links
+    # against GnuTLS for X.509 certificate generation — not in
+    # gnu-aarch64's shared package set since no other component in this
+    # stack needs it (see ADR-009).
+    builddeps:
+      - libgnutls28-dev
     vars:
       plat: qemu
       bl32_flags: >-

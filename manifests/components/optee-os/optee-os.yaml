@@ -8,7 +8,6 @@ source:
   git: https://github.com/OP-TEE/optee_os.git
   ref: master
   path: optee-os
-image: gnu-aarch64
 build:
   # upstream optee_os has no CFG_WITH_DUMMY_HWRNG at all — CFG_WITH_DUMMY_HWRNG=y
   # below is meaningless without it. This patch adds the config plus a dummy

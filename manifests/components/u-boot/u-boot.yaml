@@ -12,24 +12,18 @@ source:
   git: https://github.com/u-boot/u-boot.git
   ref: master
   path: u-boot
-image: gnu-aarch64
 build:
-  # u-boot's host tools (tools/mkimage's FIT signing support, pulled in by
-  # qemu_arm64_defconfig) link against GnuTLS too — same reasoning as
-  # tf-a.yaml's builddeps, not in gnu-aarch64's shared package set since no
-  # other component needs it.
-  builddeps:
-    - libgnutls28-dev
+  # vars.arch has no default here — arch is a target concern, not a
+  # component one (see ADR-009); every target's stack entry for u-boot
+  # must set it. Not ${env.ARCH} (which would resolve to "arm64") — u-boot
+  # keeps a single arch/arm/ Kbuild tree for both AArch32 and AArch64
+  # (CONFIG_ARM64 selected by the defconfig chosen, not by a separate ARCH
+  # value), same arch-naming mismatch already hit for OP-TEE (ADR-006);
+  # for this QEMU aarch64 target, the value a target must supply is "arm".
   vars:
     defconfig: qemu_arm64_defconfig
-  # ARCH is hardcoded to "arm" (not ${env.ARCH}, which would resolve to
-  # "arm64") deliberately: u-boot keeps a single arch/arm/ Kbuild tree for
-  # both AArch32 and AArch64 (CONFIG_ARM64 selected by the defconfig
-  # chosen, not by a separate ARCH value) — same arch-naming mismatch
-  # already hit and worked around for OP-TEE (see ADR-006) and for
-  # uroot-ramdisk.yaml's hardcoded GOARCH.
   command: >-
-    make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
-    make ARCH=arm CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS}
+    make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
+    make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS}
 artifacts:
   bin: u-boot.bin

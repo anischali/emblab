@@ -8,15 +8,9 @@ description: >
   real fit-image.its. UNSIGNED for now: the real project's command adds
   `-F -r -k keys` to sign, which needs a signing-key component emblab
   doesn't have yet (see CONTEXT.md).
-image: gnu-aarch64
 build:
   files:
     - fit-image.its
-  # mkimage ships in Debian's u-boot-tools, not gnu-aarch64's base package
-  # set — declared here (see ADR-006) rather than added to gnu-aarch64.yaml,
-  # since no other component sharing that image needs it.
-  builddeps:
-    - u-boot-tools
   vars:
     # A target sets these to ${<kernel-component>.<artifact>} and
     # ${<ramdisk-component>.<artifact>}.

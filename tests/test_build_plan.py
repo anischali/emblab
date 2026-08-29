@@ -10,16 +10,26 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from emblab import build as build_mod
 from emblab import manifests
 from emblab import qemu as qemu_mod
+from emblab import templating
+from emblab.errors import TemplateError
 
 TARGET_NAME = "qemu-arm64-secureboot"
 
 
-def _precreate_source_and_artifacts(workspace, component):
+def _precreate_source_and_artifacts(workspace, component, entry=None):
+    """Mirrors build.py's own artifacts: path resolution (${vars.X}/${env.X}
+    tokens) — entry.vars, when given, overrides component.build.vars the
+    same way build.py's merged_vars does."""
     src_dir = Path(workspace) / "src" / component.source.path
-    for rel_path in component.artifacts.values():
+    merged_vars = {**component.build.vars, **(entry.vars if entry else {})}
+    env = {"JOBS": "4", "WORKSPACE": str(workspace), "ARCH": ""}
+    for raw_rel_path in component.artifacts.values():
+        rel_path = templating.resolve_value(raw_rel_path, merged_vars=merged_vars, env=env, artifacts={})
         if rel_path.endswith("/"):
             d = src_dir / rel_path
             d.mkdir(parents=True, exist_ok=True)
@@ -37,7 +47,7 @@ def test_build_plan_renders_verbatim_tfa_command(tmp_path, monkeypatch):
     target = manifests.load_target(TARGET_NAME)
     for entry in target.stack:
         component = manifests.load_component(entry.component)
-        _precreate_source_and_artifacts(tmp_path, component)
+        _precreate_source_and_artifacts(tmp_path, component, entry)
 
     recorded = []
 
@@ -60,7 +70,7 @@ def test_build_plan_renders_verbatim_tfa_command(tmp_path, monkeypatch):
 
     artifacts_root = str(tmp_path / "artifacts" / TARGET_NAME)
     expected = (
-        "make -j4 CROSS_COMPILE=aarch64-linux-gnu- PLAT=qemu DEBUG=1 -B "
+        "make -j4 CROSS_COMPILE=$CROSS_COMPILE PLAT=qemu DEBUG=1 -B "
         "RESET_TO_BL31=1 LOG_LEVEL=30 "
         f"BL32={artifacts_root}/optee-os/tee-header "
         f"BL32_EXTRA1={artifacts_root}/optee-os/tee-pager "
@@ -83,7 +93,7 @@ def test_build_plan_secureboot_uboot_omits_arm_linux_kernel_as_bl33(tmp_path, mo
     target = manifests.load_target(target_name)
     for entry in target.stack:
         component = manifests.load_component(entry.component)
-        _precreate_source_and_artifacts(tmp_path, component)
+        _precreate_source_and_artifacts(tmp_path, component, entry)
 
     recorded = []
 
@@ -108,7 +118,7 @@ def test_build_plan_secureboot_uboot_omits_arm_linux_kernel_as_bl33(tmp_path, mo
 
     artifacts_root = str(tmp_path / "artifacts" / target_name)
     expected = (
-        "make -j4 CROSS_COMPILE=aarch64-linux-gnu- PLAT=qemu DEBUG=1 -B "
+        "make -j4 CROSS_COMPILE=$CROSS_COMPILE PLAT=qemu DEBUG=1 -B "
         "RESET_TO_BL31=1 LOG_LEVEL=30 "
         f"BL32={artifacts_root}/optee-os/tee-header "
         f"BL32_EXTRA1={artifacts_root}/optee-os/tee-pager "
@@ -129,7 +139,7 @@ def test_build_plan_skips_unchanged_component_on_second_run(tmp_path, monkeypatc
     target = manifests.load_target(target_name)
     for entry in target.stack:
         component = manifests.load_component(entry.component)
-        _precreate_source_and_artifacts(tmp_path, component)
+        _precreate_source_and_artifacts(tmp_path, component, entry)
 
     run_calls = []
 
@@ -158,7 +168,7 @@ def test_build_plan_fit_target_resolves_kernel_and_ramdisk_and_copies_its(tmp_pa
     target = manifests.load_target(target_name)
     for entry in target.stack:
         component = manifests.load_component(entry.component)
-        _precreate_source_and_artifacts(tmp_path, component)
+        _precreate_source_and_artifacts(tmp_path, component, entry)
 
     recorded = []
 
@@ -205,7 +215,7 @@ def test_build_plan_edk2_barebox_target_resolves_bios_kernel_paths(tmp_path, mon
     target = manifests.load_target(target_name)
     for entry in target.stack:
         component = manifests.load_component(entry.component)
-        _precreate_source_and_artifacts(tmp_path, component)
+        _precreate_source_and_artifacts(tmp_path, component, entry)
 
     def fake_ensure_source(workspace, component, **kwargs):
         return Path(workspace) / "src" / component.source.path
@@ -235,7 +245,6 @@ def test_build_files_content_change_triggers_rebuild(tmp_path, monkeypatch):
     fragment_path = manifests_dir / "components" / "frag" / "files" / "extra.cfg"
     fragment_path.write_text("CONFIG_FOO=y\n")
     (manifests_dir / "components" / "frag" / "frag.yaml").write_text(
-        "image: img\n"
         "build:\n  files:\n    - extra.cfg\n  vars: {}\n  command: echo hi\n"
         "artifacts:\n  out: out.txt\n"
     )
@@ -246,7 +255,7 @@ def test_build_files_content_change_triggers_rebuild(tmp_path, monkeypatch):
         name="frag-target",
         description="",
         arch="fake",
-        stack=[manifests.StackEntry(component="frag", vars={})],
+        stack=[manifests.StackEntry(component="frag", vars={}, image="img", builddeps=[])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
@@ -277,6 +286,47 @@ def test_build_files_content_change_triggers_rebuild(tmp_path, monkeypatch):
     assert second_count == first_count + 1  # content changed -> rebuilt, not skipped
 
 
+def test_artifacts_path_resolves_vars_and_env_tokens(tmp_path, monkeypatch):
+    """A declared artifacts: path can use ${vars.X}/${env.X} tokens, resolved
+    the same way build.command already is — needed for e.g. edk2.yaml's
+    Build/${vars.platform}-${vars.edk2_arch}/... output path."""
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+
+    manifests_dir = tmp_path / "manifests"
+    (manifests_dir / "images").mkdir(parents=True)
+    (manifests_dir / "components" / "comp").mkdir(parents=True)
+    (manifests_dir / "images" / "img.yaml").write_text("base_image: x\nprovision: []\n")
+    (manifests_dir / "components" / "comp" / "comp.yaml").write_text(
+        "build:\n  vars:\n    platform: ArmVirtQemu\n  command: echo hi\n"
+        "artifacts:\n  out: Build/${vars.platform}-${env.ARCH}/out.txt\n"
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+
+    target = manifests.Target(
+        name="templated-artifact-target",
+        description="",
+        arch="riscv64",
+        stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[])],
+        qemu=manifests.Qemu(binary="true", args=[]),
+    )
+
+    component = manifests.load_component("comp")
+    src_dir = Path(tmp_path) / "src" / component.source.path
+    (src_dir / "Build" / "ArmVirtQemu-riscv64").mkdir(parents=True)
+    (src_dir / "Build" / "ArmVirtQemu-riscv64" / "out.txt").write_bytes(b"fake")
+
+    def fake_ensure_source(workspace, component, **kwargs):
+        return src_dir
+
+    with patch("emblab.build.manifests.load_target", return_value=target), \
+         patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
+         patch("emblab.build.containers.ensure_image", return_value=None), \
+         patch("emblab.build.containers.run", return_value=None):
+        artifacts = build_mod.build("templated-artifact-target", tmp_path)
+
+    assert Path(artifacts["comp"]["out"]).read_bytes() == b"fake"
+
+
 def test_directory_artifact_copied_recursively(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "cpu_count", lambda: 4)
 
@@ -285,7 +335,6 @@ def test_directory_artifact_copied_recursively(tmp_path, monkeypatch):
     (manifests_dir / "components" / "dirart").mkdir(parents=True)
     (manifests_dir / "images" / "img.yaml").write_text("base_image: x\nprovision: []\n")
     (manifests_dir / "components" / "dirart" / "dirart.yaml").write_text(
-        "image: img\n"
         "build:\n  vars: {}\n  command: echo hi\n"
         "artifacts:\n  out: outdir/\n"
     )
@@ -295,7 +344,7 @@ def test_directory_artifact_copied_recursively(tmp_path, monkeypatch):
         name="dirart-target",
         description="",
         arch="fake",
-        stack=[manifests.StackEntry(component="dirart", vars={})],
+        stack=[manifests.StackEntry(component="dirart", vars={}, image="img", builddeps=[])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
@@ -327,8 +376,7 @@ def test_builddeps_installed_once_then_skipped_on_rebuild(tmp_path, monkeypatch)
     (manifests_dir / "components" / "deps").mkdir(parents=True)
     (manifests_dir / "images" / "img.yaml").write_text("base_image: x\nprovision: []\n")
     (manifests_dir / "components" / "deps" / "deps.yaml").write_text(
-        "image: img\n"
-        "build:\n  vars: {}\n  command: echo hi\n  builddeps:\n    - foo-tool\n"
+        "build:\n  vars: {}\n  command: echo hi\n"
         "artifacts:\n  out: out.txt\n"
     )
     monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
@@ -337,7 +385,7 @@ def test_builddeps_installed_once_then_skipped_on_rebuild(tmp_path, monkeypatch)
         name="deps-target",
         description="",
         arch="fake",
-        stack=[manifests.StackEntry(component="deps", vars={})],
+        stack=[manifests.StackEntry(component="deps", vars={}, image="img", builddeps=["foo-tool"])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
@@ -368,7 +416,10 @@ def test_builddeps_installed_once_then_skipped_on_rebuild(tmp_path, monkeypatch)
     assert len(apt_calls_second) == len(apt_calls_first)
 
 
-def test_stack_entry_image_override_is_used_for_build(tmp_path, monkeypatch):
+def test_stack_entry_image_is_used_for_build(tmp_path, monkeypatch):
+    """A component has no image of its own (ADR-009) — the stack entry's
+    image is the only source, and two entries can pick different images
+    for the same shared component."""
     monkeypatch.setattr(os, "cpu_count", lambda: 4)
 
     manifests_dir = tmp_path / "manifests"
@@ -377,17 +428,16 @@ def test_stack_entry_image_override_is_used_for_build(tmp_path, monkeypatch):
     (manifests_dir / "images" / "img-a.yaml").write_text("base_image: a\nprovision: []\n")
     (manifests_dir / "images" / "img-b.yaml").write_text("base_image: b\nprovision: []\n")
     (manifests_dir / "components" / "comp" / "comp.yaml").write_text(
-        "image: img-a\n"
         "build:\n  vars: {}\n  command: echo hi\n"
         "artifacts:\n  out: out.txt\n"
     )
     monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
 
     target = manifests.Target(
-        name="override-target",
+        name="picks-image-target",
         description="",
         arch="fake",
-        stack=[manifests.StackEntry(component="comp", vars={}, image="img-b")],
+        stack=[manifests.StackEntry(component="comp", vars={}, image="img-b", builddeps=[])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
@@ -406,9 +456,9 @@ def test_stack_entry_image_override_is_used_for_build(tmp_path, monkeypatch):
          patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
          patch("emblab.build.containers.ensure_image", side_effect=fake_ensure_image), \
          patch("emblab.build.containers.run", return_value=None):
-        build_mod.build("override-target", tmp_path)
+        build_mod.build("picks-image-target", tmp_path)
 
-    assert ensured_images == ["img-b"]  # the target's override, not the component's own "img-a"
+    assert ensured_images == ["img-b"]
 
 
 def test_target_arch_resolves_as_env_arch_template_token(tmp_path, monkeypatch):
@@ -419,7 +469,6 @@ def test_target_arch_resolves_as_env_arch_template_token(tmp_path, monkeypatch):
     (manifests_dir / "components" / "comp").mkdir(parents=True)
     (manifests_dir / "images" / "img.yaml").write_text("base_image: x\nprovision: []\n")
     (manifests_dir / "components" / "comp" / "comp.yaml").write_text(
-        "image: img\n"
         "build:\n  vars: {}\n  command: echo ${env.ARCH}\n"
         "artifacts:\n  out: out.txt\n"
     )
@@ -429,7 +478,7 @@ def test_target_arch_resolves_as_env_arch_template_token(tmp_path, monkeypatch):
         name="arch-target",
         description="",
         arch="riscv64",
-        stack=[manifests.StackEntry(component="comp", vars={})],
+        stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
@@ -473,7 +522,6 @@ def test_component_not_referencing_env_arch_is_structurally_unaffected(tmp_path,
     (manifests_dir / "components" / "comp").mkdir(parents=True)
     (manifests_dir / "images" / "img.yaml").write_text("base_image: x\nprovision: []\n")
     (manifests_dir / "components" / "comp" / "comp.yaml").write_text(
-        "image: img\n"
         "build:\n  vars: {}\n  command: make PLATFORM=some-platform\n"
         "artifacts:\n  out: out.txt\n"
     )
@@ -483,7 +531,7 @@ def test_component_not_referencing_env_arch_is_structurally_unaffected(tmp_path,
         name="no-arch-target",
         description="",
         arch="riscv64",
-        stack=[manifests.StackEntry(component="comp", vars={})],
+        stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[])],
         qemu=manifests.Qemu(binary="true", args=[]),
     )
 
@@ -507,3 +555,43 @@ def test_component_not_referencing_env_arch_is_structurally_unaffected(tmp_path,
     (command, extra_env) = recorded[0]
     assert command == ["sh", "-c", "make PLATFORM=some-platform"]
     assert extra_env is None
+
+
+def test_component_arch_var_with_no_default_requires_target_to_set_it(tmp_path, monkeypatch):
+    """ADR-009: arch-flavored vars (arch/goarch/edk2_arch/...) are a target
+    concern, not a component one — a component references ${vars.arch} but
+    declares no default for it, so a target that forgets to set it hits a
+    clear TemplateError at build time rather than silently building for the
+    wrong (or an empty) architecture."""
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+
+    manifests_dir = tmp_path / "manifests"
+    (manifests_dir / "images").mkdir(parents=True)
+    (manifests_dir / "components" / "comp").mkdir(parents=True)
+    (manifests_dir / "images" / "img.yaml").write_text("base_image: x\nprovision: []\n")
+    (manifests_dir / "components" / "comp" / "comp.yaml").write_text(
+        "build:\n  vars: {}\n  command: echo ${vars.arch}\n"
+        "artifacts:\n  out: out.txt\n"
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+
+    target = manifests.Target(
+        name="forgot-arch-target",
+        description="",
+        arch="riscv64",
+        stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[])],
+        qemu=manifests.Qemu(binary="true", args=[]),
+    )
+
+    component = manifests.load_component("comp")
+    _precreate_source_and_artifacts(tmp_path, component)
+
+    def fake_ensure_source(workspace, component, **kwargs):
+        return Path(workspace) / "src" / component.source.path
+
+    with patch("emblab.build.manifests.load_target", return_value=target), \
+         patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
+         patch("emblab.build.containers.ensure_image", return_value=None), \
+         patch("emblab.build.containers.run", return_value=None), \
+         pytest.raises(TemplateError, match="vars.arch"):
+        build_mod.build("forgot-arch-target", tmp_path)

@@ -13,22 +13,22 @@ source:
   git: https://github.com/barebox/barebox
   ref: master
   path: barebox
-image: gnu-aarch64
 build:
+  # vars.arch has no default here — arch is a target concern, not a
+  # component one (see ADR-009); every target's stack entry for barebox
+  # must set it. $CROSS_COMPILE (unbraced) is a real shell env var, set by
+  # whichever image the target picks — NOT an emblab ${...} template token
+  # (those only resolve vars./env.JOBS/env.WORKSPACE/<component>.<artifact>;
+  # see templating.py's default_env()). ARCH is a var, not a real env var:
+  # some upstream build systems (OP-TEE's, for one) read ARCH from the
+  # environment and default it internally even when their own command
+  # never mentions it, so a real env var would leak into builds that never
+  # asked for it — see ADR-006/ADR-009.
   vars:
     defconfig: efi_v8_defconfig
-  # $CROSS_COMPILE (unbraced) is a real shell env var, set by the gnu-aarch64
-  # image's `env:` block and injected into the container at run time.
-  # ${env.ARCH} (braced) is an emblab template token, not a shell var — it
-  # resolves to the *target's* `arch:` field at render time, the same way
-  # ${env.JOBS} already does for os.cpu_count(). Deliberately NOT a real
-  # env var: some upstream build systems (OP-TEE's, for one) read ARCH from
-  # the environment and default it internally even when their own command
-  # never mentions it, so a real env var would leak into builds that never
-  # asked for it — see ADR-006.
   command: >-
-    make ARCH=${env.ARCH} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
-    make ARCH=${env.ARCH} CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS}
+    make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
+    make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS}
 artifacts:
   # barebox's build drops several files into images/ (barebox-dt-2nd.img
   # among them); which one a given target cares about is that target's

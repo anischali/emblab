@@ -13,7 +13,6 @@ source:
   git: https://github.com/u-root/u-root.git
   ref: main
   path: u-root
-image: go
 build:
   vars:
     # Space-separated Go command packages to bundle; empty lets u-root's
@@ -25,10 +24,15 @@ build:
     #   embed: "${dt-utils.barebox-state}:bbin/barebox-state"
     embed: ""
     output: initramfs.cpio
+  # vars.goarch has no default here — arch is a target concern, not a
+  # component one (see ADR-009); every target's stack entry for
+  # uroot-ramdisk must set it. Go's arch names don't always match Linux
+  # kernel ARCH= names in general, so this stays its own var rather than
+  # reusing ${env.ARCH} — see ADR-006.
   command: >-
     set -e;
     FILES_ARGS="";
     for pair in ${vars.embed}; do FILES_ARGS="$FILES_ARGS -files $pair"; done;
-    GOARCH=arm64 GOOS=linux go run u-root.go -o ${vars.output} -skip-ldd $FILES_ARGS ${vars.commands}
+    GOARCH=${vars.goarch} GOOS=linux go run u-root.go -o ${vars.output} -skip-ldd $FILES_ARGS ${vars.commands}
 artifacts:
   cpio: initramfs.cpio

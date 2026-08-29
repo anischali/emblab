@@ -1,11 +1,13 @@
 """Load and validate the YAML manifests under manifests/{images,components,targets}/.
 
 Components are pure: source + build command + declared artifacts, and never
-reference another component. Targets wire the graph: an ordered stack of
-{component, vars} entries, where a stack entry's vars may reference a
-sibling component's artifact via ``${<component>.<key>}``. This module
-enforces that split at load time so a broken manifest fails fast with a
-clear message, rather than surfacing as a confusing build-time error.
+reference another component — nor do they know which image/toolchain
+container they build under or what extra packages that needs (see ADR-009).
+Targets wire the graph: an ordered stack of {component, vars, image,
+builddeps} entries, where a stack entry's vars may reference a sibling
+component's artifact via ``${<component>.<key>}``. This module enforces
+that split at load time so a broken manifest fails fast with a clear
+message, rather than surfacing as a confusing build-time error.
 """
 
 import dataclasses
@@ -42,7 +44,6 @@ class Build:
     command: str
     vars: dict
     files: list  # filenames, each backed by manifests/components/<component>/files/<filename>
-    builddeps: list  # apt package names, installed into the component's image container
     patches: list  # filenames (same files/ dir), git-applied in order onto a fresh clone
 
 
@@ -51,16 +52,19 @@ class Component:
     name: str
     description: str
     source: Source
-    image: str
     build: Build
     artifacts: dict
+    # No image or builddeps here — components are agnostic of which image/
+    # toolchain container they build under and what extra packages that
+    # needs; a target's stack entry owns both (see ADR-009).
 
 
 @dataclasses.dataclass
 class StackEntry:
     component: str
     vars: dict
-    image: str = None  # None means "use the component's own image"
+    image: str  # required — which image container this component builds under, for this target
+    builddeps: list  # apt package names installed into that (image, component) container, for this target
 
 
 @dataclasses.dataclass
@@ -224,22 +228,27 @@ def load_component(name):
         command=_require(build_data, "command", path),
         vars=build_vars,
         files=build_files,
-        builddeps=list(build_data.get("builddeps", [])),
         patches=build_patches,
     )
 
-    image_name = _require(data, "image", path)
-    if not image_path(image_name).exists():
+    if "image" in data:
         raise ManifestError(
-            f"{_display(path)}: image '{image_name}' has no "
-            f"manifest at manifests/images/{image_name}.yaml"
+            f"{_display(path)}: component manifests don't declare 'image' — "
+            "components are agnostic of which image/toolchain container "
+            "they build under; a target's stack entry sets it (see ADR-009)"
+        )
+    if "builddeps" in build_data:
+        raise ManifestError(
+            f"{_display(path)}: build.builddeps isn't a component-level "
+            "field — a target's stack entry sets builddeps (see ADR-009), "
+            "since what a component needs installed can depend on which "
+            "image the target chose"
         )
 
     return Component(
         name=name,
         description=data.get("description", ""),
         source=source,
-        image=image_name,
         build=build,
         artifacts=dict(data.get("artifacts", {})),
     )
@@ -271,19 +280,20 @@ def load_target(name):
                 f"{component_name}/{component_name}.yaml)"
             )
 
-        image_override = raw_entry.get("image")
-        if image_override is not None and not image_path(image_override).exists():
+        image_name = _require(raw_entry, "image", path)
+        if not image_path(image_name).exists():
             raise ManifestError(
-                f"{_display(path)}: stack[{i}] ('{component_name}') overrides "
-                f"image to '{image_override}', which has no manifest at "
-                f"manifests/images/{image_override}.yaml"
+                f"{_display(path)}: stack[{i}] ('{component_name}') sets "
+                f"image to '{image_name}', which has no manifest at "
+                f"manifests/images/{image_name}.yaml"
             )
 
         stack.append(
             StackEntry(
                 component=component_name,
                 vars=dict(raw_entry.get("vars") or {}),
-                image=image_override,
+                image=image_name,
+                builddeps=list(raw_entry.get("builddeps", [])),
             )
         )
 

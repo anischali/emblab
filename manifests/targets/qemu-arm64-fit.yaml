@@ -13,10 +13,20 @@ description: >
 arch: arm64
 stack:
   - component: linux-kernel
-    vars: {}
+    image: gnu-aarch64
+    vars:
+      arch: arm64
   - component: uroot-ramdisk
-    vars: {}
+    image: go
+    vars:
+      goarch: arm64
   - component: fit-image
+    image: gnu-aarch64
+    # mkimage ships in Debian's u-boot-tools, not gnu-aarch64's base
+    # package set — not needed by anything else in this stack (see
+    # ADR-009).
+    builddeps:
+      - u-boot-tools
     vars:
       kernel: ${linux-kernel.image}
       ramdisk: ${uroot-ramdisk.cpio}

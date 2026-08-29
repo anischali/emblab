@@ -6,7 +6,7 @@ from emblab.manifests import Qemu, StackEntry, Target
 
 
 def _target(stack_specs):
-    stack = [StackEntry(component=name, vars=v) for name, v in stack_specs]
+    stack = [StackEntry(component=name, vars=v, image="img", builddeps=[]) for name, v in stack_specs]
     return Target(name="t", description="", arch="fake", stack=stack, qemu=Qemu(binary="true", args=[]))
 
 

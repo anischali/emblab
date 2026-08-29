@@ -1,0 +1,13 @@
+description: fixture target with two stack entries picking two different images
+arch: fake
+stack:
+  - component: fake-a
+    image: fake-image
+    vars: {}
+  - component: fake-b
+    image: fake-image-2
+    vars:
+      input: ""
+qemu:
+  binary: "true"
+  args: []

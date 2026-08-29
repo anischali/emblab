@@ -24,23 +24,22 @@ source:
   # {OpensslLib/openssl,MbedTlsLib/mbedtls}) — ArmVirtQemu.dsc pulls in
   # CryptoPkg components, so a build without these fails.
   submodules: true
-image: gnu-aarch64
 build:
-  # iasl (ACPI table compiler) and uuid-dev are edk2-specific, not needed by
-  # anything else sharing gnu-aarch64; cmake builds the vendored crypto
-  # submodules. python3-pip/python3 are already in gnu-aarch64's base set.
-  builddeps:
-    - iasl
-    - uuid-dev
-    - cmake
-  vars: {}
+  # vars.edk2_arch has no default here — arch is a target concern, not a
+  # component one (see ADR-009); every target's stack entry for edk2 must
+  # set it (EDK2's own BaseTools -a flag / GCC5_<ARCH>_PREFIX env var name
+  # spelling, e.g. "AARCH64" — not ${env.ARCH}, which would resolve to the
+  # differently-spelled "arm64").
+  vars:
+    platform: ArmVirtQemu
+    platform_path: ArmVirtPkg
   command: >-
     set -e;
     export PACKAGES_PATH=$PWD;
-    export GCC5_AARCH64_PREFIX=$CROSS_COMPILE;
+    export GCC5_${vars.edk2_arch}_PREFIX=$CROSS_COMPILE;
     pip3 install --break-system-packages -r pip-requirements.txt;
     . ./edksetup.sh;
     make -C BaseTools;
-    build -a AARCH64 -t GCC5 -b DEBUG -p ArmVirtPkg/ArmVirtQemu.dsc
+    build -a ${vars.edk2_arch} -t GCC5 -b DEBUG -p ${vars.platform_path}/${vars.platform}.dsc
 artifacts:
-  fd: Build/ArmVirtQemu-AARCH64/DEBUG_GCC5/FV/QEMU_EFI.fd
+  fd: Build/${vars.platform}-${vars.edk2_arch}/DEBUG_GCC5/FV/QEMU_EFI.fd

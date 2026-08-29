@@ -6,8 +6,10 @@ description: >
 arch: arm64
 stack:
   - component: barebox
+    image: gnu-aarch64
     vars:
       defconfig: efi_v8_defconfig
+      arch: arm64
 qemu:
   binary: qemu-system-aarch64
   args:

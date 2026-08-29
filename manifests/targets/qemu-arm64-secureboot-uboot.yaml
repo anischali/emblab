@@ -10,11 +10,27 @@ description: >
 arch: arm64
 stack:
   - component: optee-os
+    image: gnu-aarch64
     vars:
       platform: vexpress-qemu_armv8a
   - component: u-boot
-    vars: {}
+    image: gnu-aarch64
+    # u-boot's host tools (tools/mkimage's FIT signing support, pulled in
+    # by qemu_arm64_defconfig) link against GnuTLS — not in gnu-aarch64's
+    # shared package set since no other component in this stack needs it
+    # (see ADR-009).
+    builddeps:
+      - libgnutls28-dev
+    # u-boot's own Kbuild ARCH= spelling for this QEMU aarch64 target is
+    # "arm" (see u-boot.yaml) — not "arm64".
+    vars:
+      arch: arm
   - component: tf-a
+    image: gnu-aarch64
+    # GENERATE_COT=1 in tf-a's command builds cert_create, which also
+    # links against GnuTLS (see ADR-009).
+    builddeps:
+      - libgnutls28-dev
     vars:
       plat: qemu
       bl32_flags: >-
