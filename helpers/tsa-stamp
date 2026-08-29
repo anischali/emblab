@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Add RFC 3161 TSA stamps to all signature nodes in a signed FIT image.
+Each tsa-stamp is inserted immediately after the signature node's value
+property.
+
+Transcribed verbatim (stdlib-only, already generic) from
+barebox-arm64-poc/tsa-poc/tsa-stamp.py, renamed without its .py extension
+to match this scripts/ directory's other helpers.
+
+Usage:
+  tsa-stamp image.fit http://localhost:3161
+  tsa-stamp image.fit freetsa --ca-bundle tsa-keys/freetsa-bundle.pem
+"""
+
+import argparse
+import struct
+import subprocess
+import sys
+import tempfile
+import urllib.request
+from pathlib import Path
+
+FREETSA_URL = "https://freetsa.org/tsr"
+
+
+def _run(*args):
+    subprocess.run(args, check=True, stderr=subprocess.DEVNULL)
+
+
+def _fdt_header(dtb):
+    magic, totalsize, off_struct, off_strings, _rsvmap, _ver, _lcomp, _cpu, size_strings, size_struct = \
+        struct.unpack_from(">10I", dtb)
+    assert magic == 0xd00dfeed, "not a valid FDT"
+    return totalsize, off_struct, off_strings, size_strings, size_struct
+
+
+def _fdt_find_value_nodes(dtb):
+    """Walk the FDT; return [(node_path, value_bytes, insert_at), ...] in traversal order."""
+    _, off_struct, off_strings, _, size_struct = _fdt_header(dtb)
+
+    results, path, stack = [], [], []
+    pos = off_struct
+
+    while pos < off_struct + size_struct:
+        token = struct.unpack_from(">I", dtb, pos)[0]
+        pos += 4
+
+        if token == 1:   # FDT_BEGIN_NODE
+            end = dtb.index(0, pos)
+            path.append(dtb[pos:end].decode())
+            pos = (end + 4) & ~3
+            stack.append(None)
+
+        elif token == 2: # FDT_END_NODE
+            state = stack.pop()
+            if state:
+                results.append(("/".join(path), *state))
+            path.pop()
+
+        elif token == 3: # FDT_PROP
+            plen, nameoff = struct.unpack_from(">II", dtb, pos)
+            data = bytes(dtb[pos + 8: pos + 8 + plen])
+            pos += 8 + ((plen + 3) & ~3)
+            ns = off_strings + nameoff
+            name = dtb[ns:dtb.index(0, ns)].decode()
+            if name == "value" and stack:
+                stack[-1] = (data, pos)  # (value_bytes, offset right after value record)
+
+        elif token == 9: # FDT_END
+            break
+
+    return results  # [(node_path, value_bytes, insert_at), ...]
+
+
+def _fdt_insert_prop(dtb, insert_at, prop_name, prop_data):
+    """Return a new bytearray with prop_name=prop_data inserted at insert_at."""
+    totalsize, off_struct, off_strings, size_strings, size_struct = _fdt_header(dtb)
+
+    new_nameoff = size_strings
+    name_b = prop_name.encode() + b"\x00"
+    pad = (-len(prop_data)) % 4
+    prop_rec = struct.pack(">III", 3, len(prop_data), new_nameoff) + prop_data + b"\x00" * pad
+
+    new_dtb = bytearray(
+        dtb[:insert_at]
+        + prop_rec
+        + dtb[insert_at:off_strings]
+        + dtb[off_strings:off_strings + size_strings]
+        + name_b
+        + dtb[off_strings + size_strings:totalsize]
+    )
+
+    new_off_strings = off_strings + len(prop_rec)
+    struct.pack_into(">I", new_dtb, 4,  totalsize + len(prop_rec) + len(name_b))
+    struct.pack_into(">I", new_dtb, 12, new_off_strings)
+    struct.pack_into(">I", new_dtb, 32, size_strings + len(name_b))
+    struct.pack_into(">I", new_dtb, 36, size_struct   + len(prop_rec))
+
+    return new_dtb
+
+
+def _request_token(sig_bytes, url, ca, tmp):
+    sig_f, req_f, resp_f = f"{tmp}/sig.bin", f"{tmp}/ts.req", f"{tmp}/ts.resp"
+    Path(sig_f).write_bytes(sig_bytes)
+    _run("openssl", "ts", "-query", "-data", sig_f, "-sha256", "-cert", "-no_nonce", "-out", req_f)
+
+    req = urllib.request.Request(
+        url, data=Path(req_f).read_bytes(),
+        headers={"Content-Type": "application/timestamp-query"})
+    with urllib.request.urlopen(req) as r:
+        token = r.read()
+    Path(resp_f).write_bytes(token)
+
+    if ca:
+        _run("openssl", "ts", "-verify", "-queryfile", req_f, "-in", resp_f, "-CAfile", ca)
+
+    return token
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("image",   help="FIT image (modified in place)")
+    ap.add_argument("tsa_url", help="TSA server URL or 'freetsa'")
+    ap.add_argument("--ca-bundle", help="CA bundle PEM for token verification")
+    args = ap.parse_args()
+
+    url = FREETSA_URL if args.tsa_url.lower() == "freetsa" else args.tsa_url
+    if not url.startswith("http"):
+        url = f"http://{url}"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ca = args.ca_bundle
+        if ca is None:
+            try:
+                with urllib.request.urlopen(f"{url}/cert.pem") as r:
+                    ca = f"{tmp}/tsa.pem"
+                    Path(ca).write_bytes(r.read())
+            except Exception:
+                print("[!] cannot fetch TSA cert — skipping verification", file=sys.stderr)
+
+        dtb = bytearray(Path(args.image).read_bytes())
+        # Only stamp configuration signature nodes — image hash nodes (/images/*/hash-*)
+        # are listed in hashed-nodes and covered by the signature; modifying them
+        # would corrupt the signature.
+        nodes = [n for n in _fdt_find_value_nodes(dtb)
+                 if n[0].lstrip("/").startswith("configurations/")]
+
+        if not nodes:
+            sys.exit("no signature nodes with 'value' found")
+
+        print(f"[*] {len(nodes)} signature node(s) found")
+
+        # fetch all tokens first (insert_at values are from the original, unpatched FDT)
+        pending = []
+        for node_path, value_bytes, insert_at in nodes:
+            print(f"[*] {node_path}: requesting token for {len(value_bytes)}-byte signature")
+            token = _request_token(value_bytes, url, ca, tmp)
+            print(f"    {len(token)} bytes {'[verified]' if ca else '[unverified]'}")
+            pending.append((insert_at, node_path, token))
+
+        # patch in reverse offset order — later inserts don't shift earlier insert_at values
+        for insert_at, node_path, token in sorted(pending, key=lambda x: x[0], reverse=True):
+            dtb = _fdt_insert_prop(dtb, insert_at, "tsa-token", token)
+            print(f"[*] tsa-stamp inserted after value → {node_path}/tsa-token")
+
+        Path(args.image).write_bytes(dtb)
+
+
+if __name__ == "__main__":
+    main()

@@ -11,6 +11,16 @@ from pathlib import Path
 
 from . import state
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+# Shared helper scripts (generate-fitkeys, tsa-stamp, ...) usable by name
+# from any component's build.command and from `emblab shell` — bind-mounted
+# onto /usr/local/bin (ahead of /usr/bin on Debian's default PATH, and
+# already on every base image's PATH) rather than copied per-component, so
+# adding a script here makes it available everywhere with no manifest
+# changes and no per-component files: entry.
+HELPERS_DIR = REPO_ROOT / "helpers"
+HELPERS_MOUNT = "/usr/local/bin"
+
 
 def _udocker_env(workspace):
     env = dict(os.environ)
@@ -96,6 +106,7 @@ def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, l
     (udocker has no `-v` shorthand).
     """
     args = ["run"]
+    args.append(f"--volume={HELPERS_DIR}:{HELPERS_MOUNT}")
     for host_path, container_path in bind_mounts:
         args.append(f"--volume={host_path}:{container_path}")
     for key, value in {**image.env, **(extra_env or {})}.items():
@@ -109,6 +120,7 @@ def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, l
 
 def shell(image, workspace):
     """Interactive shell inside the provisioned container, for debugging a
-    build by hand."""
-    args = ["run", "--workdir=/", container_name(image), "sh"]
+    build by hand. Same helpers/ bind mount as run() — generate-fitkeys,
+    tsa-stamp, etc. are on PATH here too."""
+    args = ["run", f"--volume={HELPERS_DIR}:{HELPERS_MOUNT}", "--workdir=/", container_name(image), "sh"]
     subprocess.run(["udocker", *args], env=_udocker_env(workspace))

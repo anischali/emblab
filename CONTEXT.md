@@ -268,6 +268,14 @@ Nothing in flight.
    proved the pattern generalizes cleanly: a new image + component (if the
    arch needs one not covered by an existing component) + target manifest,
    no changes needed to already-shared components (ADR-009's whole point).
+9. Wire the new `helpers/generate-fitkeys`/`tsa-stamp` into an actual
+   signed-FIT path: `fit-image.its` needs a `signature` node (dropped when
+   the `.its` was trimmed for ADR-005 — see the real one still in
+   `barebox-arm64-poc/fit-image.its`), `fit-image.yaml`'s command needs to
+   call `generate-fitkeys`/`mkimage -F -r -k` and produce the
+   `keystore.cfg` fragment `barebox.yaml`'s `vars.extra_conf` (see Proven)
+   already knows how to consume, opt-in via a var so today's unsigned
+   `qemu-arm64-fit` target is unaffected.
 9. `barebox.yaml` gained `vars.extra_conf` (empty by default, same
    conditionally-populated-var trick as `tf-a.yaml`'s `bl32_flags`): a
    target's stack entry can point it at one or more Kconfig fragment files
@@ -281,6 +289,20 @@ Nothing in flight.
    itself is offline-tested (`tests/test_build_plan.py`'s two
    `test_barebox_extra_conf_*` cases) but **UNVERIFIED against a real
    build** — no target actually sets `extra_conf` yet.
+10. New top-level `helpers/` directory: shared executable helper scripts
+    (not manifest YAML, so not under `manifests/`, and not per-component
+    `files/` since they're cross-component) — `generate-fitkeys` (RSA
+    keypair + self-signed cert for FIT signing / a barebox keystore) and
+    `tsa-stamp` (RFC 3161 timestamp a signed FIT image's signature nodes),
+    both transcribed from `barebox-arm64-poc`'s `generate-fit`/`tsa-poc`.
+    `containers.py`'s `run()` and `shell()` both now unconditionally
+    bind-mount `helpers/` onto `/usr/local/bin` (ahead of `/usr/bin` on
+    every base image's Debian-default PATH), so any component's
+    `build.command` can call them by name with no manifest wiring, and so
+    can `emblab shell`. Verified for real: `generate-fitkeys` run inside
+    the already-provisioned `emblab-gnu-aarch64` container via this exact
+    mount produced a real key+cert (`openssl x509 -noout -subject` read it
+    back). Deliberately NOT wired into `fit-image.yaml` yet — see Next.
 
 ## Open questions
 - Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox`,
