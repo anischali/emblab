@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: (GPL-2.0-or-later OR MIT)
+/*
+ */
+
+/ {
+
+	aliases {
+		state = "/state";
+	};
+
+#ifdef fallback_dts
+    partitions {
+		compatible = "fixed-partitions";
+
+		state_part: state {
+			partuuid = "752459d0-9246-432e-b224-a6675425cc82";
+		};
+	};
+#endif
+
+	state {
+		compatible = "barebox,state";
+		magic = <0x4d433230>;
+		backend-type = "raw";
+	#ifdef bcm2711_rpi_cm4_io_dts
+		backend = <&emmc2>;
+	#elif fallback_dts
+        backend = <&state_part>;
+    #endif
+		backend-stridesize = <4096>;
+
+		bootstate {
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			system1 {
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				remaining_attempts@0 {
+					reg = <0x0 0x4>;
+					type = "uint32";
+					default = <3>;
+				};
+
+				priority@4 {
+					reg = <0x4 0x4>;
+					type = "uint32";
+					default = <20>;
+				};
+			};
+
+			system2 {
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				remaining_attempts@8 {
+					reg = <0x8 0x4>;
+					type = "uint32";
+					default = <3>;
+				};
+
+				priority@c {
+					reg = <0xc 0x4>;
+					type = "uint32";
+					default = <10>;
+				};
+			};
+
+			rescue {
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				remaining_attempts@10 {
+					reg = <0x10 0x4>;
+					type = "uint32";
+					default = <3>;
+				};
+
+				priority@14 {
+					reg = <0x14 0x4>;
+					type = "uint32";
+					default = <10>;
+				};
+			};
+
+			last_chosen@18 {
+				reg = <0x18 0x4>;
+				type = "uint32";
+			};
+		};
+	};
+};
