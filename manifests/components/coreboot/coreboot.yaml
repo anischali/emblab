@@ -64,19 +64,24 @@ description: >
 
   source.submodules is a list, not `true`: coreboot's .gitmodules carries
   many vendor-specific 3rdparty/ trees (AMD OpenSIL, Intel STM, PPC
-  signing utils, opensbi, vboot, ...) that qemu-aarch64 needs none of —
-  confirmed against a real clone attempt, where a transient TLS failure
-  fetching the entirely-unrelated AMD OpenSIL submodule broke the whole
-  build. The mainboard's own Kconfig (`select
-  ARM64_USE_ARM_TRUSTED_FIRMWARE`) does need 3rdparty/arm-trusted-firmware
-  (and that submodule's own nested ones, pulled in recursively) — that's
-  the one real submodule dependency, so only its path is listed.
+  signing utils, opensbi, ...) that qemu-aarch64 needs none of — confirmed
+  against a real clone attempt, where a transient TLS failure fetching the
+  entirely-unrelated AMD OpenSIL submodule broke the whole build. The
+  mainboard's own Kconfig (`select ARM64_USE_ARM_TRUSTED_FIRMWARE`) does
+  need 3rdparty/arm-trusted-firmware (and that submodule's own nested
+  ones, pulled in recursively). `3rdparty/vboot` is also real and
+  required, confirmed for real — not a Kconfig-gated dependency at all:
+  `commonlib/bsd/include/commonlib/bsd/cbfs_serialized.h` unconditionally
+  `#include <vb2_sha.h>` (from vboot), which the cbfstool host-tool build
+  needs regardless of whether verified boot itself is enabled — an
+  originally-guessed "vboot isn't needed" was wrong (see CONTEXT.md).
 source:
   git: https://github.com/coreboot/coreboot.git
   ref: main
   path: coreboot
   submodules:
     - 3rdparty/arm-trusted-firmware
+    - 3rdparty/vboot
 build:
   files:
     - configs/config.emblab_qemu_aarch64
@@ -116,9 +121,10 @@ build:
   # `Documentation/`, `build/` left. Root cause of the udocker-specific
   # destructiveness itself is still NOT understood (the bare update alone
   # doesn't explain it on a normal filesystem), but skipping the whole
-  # block entirely sidesteps it: we already handle the one submodule this
-  # mainboard needs (3rdparty/arm-trusted-firmware) via source.submodules,
-  # so this project never needed coreboot's own auto-update to run at all.
+  # block entirely sidesteps it: we already handle the submodules this
+  # mainboard needs (3rdparty/arm-trusted-firmware, 3rdparty/vboot — see
+  # source.submodules above) via source.submodules, so this project never
+  # needed coreboot's own auto-update to run at all.
   command: >-
     set -e;
     make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ KBUILD_DEFCONFIG=${vars.defconfig} defconfig;
