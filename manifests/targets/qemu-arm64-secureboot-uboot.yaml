@@ -39,6 +39,7 @@ stack:
       bl33: ${u-boot.bin}
 qemu:
   binary: qemu-system-aarch64
+  image: qemu-runner
   args:
     - "-cpu"
     - "cortex-a57"

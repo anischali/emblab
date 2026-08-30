@@ -43,6 +43,7 @@ stack:
       fv_boot_app_flag: -D FV_BOOT_APP_PATH=${barebox.images}/barebox-dt-2nd.img
 qemu:
   binary: qemu-system-aarch64
+  image: qemu-runner
   args:
     - "-cpu"
     - "cortex-a57"

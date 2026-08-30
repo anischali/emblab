@@ -73,6 +73,7 @@ class StackEntry:
 class Qemu:
     binary: str
     args: list
+    image: str  # which image container to exec the qemu binary in (see ADR-012)
 
 
 @dataclasses.dataclass
@@ -334,9 +335,16 @@ def load_target(name):
                 )
 
     qemu_data = _require(data, "qemu", path)
+    qemu_image_name = _require(qemu_data, "image", path)
+    if not image_path(qemu_image_name).exists():
+        raise ManifestError(
+            f"{_display(path)}: qemu.image is '{qemu_image_name}', which has "
+            f"no manifest at manifests/images/{qemu_image_name}.yaml"
+        )
     qemu = Qemu(
         binary=_require(qemu_data, "binary", path),
         args=list(_require(qemu_data, "args", path)),
+        image=qemu_image_name,
     )
 
     return Target(

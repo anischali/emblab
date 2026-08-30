@@ -32,6 +32,7 @@ stack:
       ramdisk: ${uroot-ramdisk.cpio}
 qemu:
   binary: qemu-system-aarch64
+  image: qemu-runner
   args:
     - "-cpu"
     - "cortex-a57"

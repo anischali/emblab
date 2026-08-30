@@ -33,6 +33,7 @@ def test_load_target_orders_matches_yaml_and_validates():
     assert [entry.component for entry in target.stack] == ["fake-a", "fake-b"]
     assert target.qemu.binary == "true"
     assert target.qemu.args == ["-x", "${fake-a.out}"]
+    assert target.qemu.image == "fake-image"
 
 
 def test_load_target_stack_entry_image_is_parsed():
@@ -53,7 +54,7 @@ def test_load_target_stack_entry_missing_image_raises_clear_error(tmp_path, monk
         "stack:\n"
         "  - component: fake-a\n"
         "    vars: {}\n"
-        "qemu:\n  binary: \"true\"\n  args: []\n",
+        "qemu:\n  binary: \"true\"\n  image: img\n  args: []\n",
     )
     monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
     with pytest.raises(ManifestError, match="missing required field 'image'"):
@@ -74,7 +75,7 @@ def test_load_target_stack_entry_unknown_image_raises_clear_error(tmp_path, monk
         "  - component: fake-a\n"
         "    image: no-such-image\n"
         "    vars: {}\n"
-        "qemu:\n  binary: \"true\"\n  args: []\n",
+        "qemu:\n  binary: \"true\"\n  image: img\n  args: []\n",
     )
     monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
     with pytest.raises(ManifestError, match="no-such-image"):
@@ -85,6 +86,48 @@ def test_load_target_stack_entry_two_entries_pick_different_images():
     target = manifests.load_target("fake-target-two-images")
     assert target.stack[0].image == "fake-image"
     assert target.stack[1].image == "fake-image-2"
+
+
+def test_load_target_qemu_missing_image_raises_clear_error(tmp_path, monkeypatch):
+    manifests_dir = tmp_path / "manifests"
+    _write(manifests_dir / "images" / "img.yaml", "base_image: x\nprovision: []\n")
+    _write(
+        manifests_dir / "components" / "fake-a" / "fake-a.yaml",
+        (FIXTURES / "components" / "fake-a" / "fake-a.yaml").read_text(),
+    )
+    _write(
+        manifests_dir / "targets" / "no-qemu-image.yaml",
+        "arch: fake\n"
+        "stack:\n"
+        "  - component: fake-a\n"
+        "    image: img\n"
+        "    vars: {}\n"
+        "qemu:\n  binary: \"true\"\n  args: []\n",
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+    with pytest.raises(ManifestError, match="missing required field 'image'"):
+        manifests.load_target("no-qemu-image")
+
+
+def test_load_target_qemu_unknown_image_raises_clear_error(tmp_path, monkeypatch):
+    manifests_dir = tmp_path / "manifests"
+    _write(manifests_dir / "images" / "img.yaml", "base_image: x\nprovision: []\n")
+    _write(
+        manifests_dir / "components" / "fake-a" / "fake-a.yaml",
+        (FIXTURES / "components" / "fake-a" / "fake-a.yaml").read_text(),
+    )
+    _write(
+        manifests_dir / "targets" / "bad-qemu-image.yaml",
+        "arch: fake\n"
+        "stack:\n"
+        "  - component: fake-a\n"
+        "    image: img\n"
+        "    vars: {}\n"
+        "qemu:\n  binary: \"true\"\n  image: no-such-image\n  args: []\n",
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+    with pytest.raises(ManifestError, match="no-such-image"):
+        manifests.load_target("bad-qemu-image")
 
 
 def test_component_with_image_field_raises_clear_error(tmp_path, monkeypatch):
@@ -133,7 +176,7 @@ def test_load_target_stack_entry_builddeps_is_parsed(tmp_path, monkeypatch):
         "    image: img\n"
         "    builddeps:\n      - foo\n      - bar\n"
         "    vars: {}\n"
-        "qemu:\n  binary: \"true\"\n  args: []\n",
+        "qemu:\n  binary: \"true\"\n  image: img\n  args: []\n",
     )
     monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
     target = manifests.load_target("deps-target")
@@ -162,7 +205,7 @@ def test_load_target_stack_entry_patches_is_parsed(tmp_path, monkeypatch):
         "    image: img\n"
         "    patches:\n      - 0001-extra.patch\n"
         "    vars: {}\n"
-        "qemu:\n  binary: \"true\"\n  args: []\n",
+        "qemu:\n  binary: \"true\"\n  image: img\n  args: []\n",
     )
     monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
     target = manifests.load_target("patches-target")
@@ -185,7 +228,7 @@ def test_load_target_stack_entry_patches_missing_on_disk_raises_clear_error(tmp_
         "    image: img\n"
         "    patches:\n      - 0001-missing.patch\n"
         "    vars: {}\n"
-        "qemu:\n  binary: \"true\"\n  args: []\n",
+        "qemu:\n  binary: \"true\"\n  image: img\n  args: []\n",
     )
     monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
     with pytest.raises(ManifestError, match="0001-missing.patch"):
@@ -215,7 +258,7 @@ def test_target_rejects_unknown_component_in_stack(tmp_path, monkeypatch):
     _write(
         manifests_dir / "targets" / "bad.yaml",
         "stack:\n  - component: nope\n    image: img\n    vars: {}\n"
-        "qemu:\n  binary: true\n  args: []\n",
+        "qemu:\n  binary: true\n  image: img\n  args: []\n",
     )
     monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
     with pytest.raises(ManifestError, match="unknown component"):
@@ -234,7 +277,7 @@ def test_target_rejects_self_reference(tmp_path, monkeypatch):
     _write(
         manifests_dir / "targets" / "bad.yaml",
         "stack:\n  - component: a\n    image: img\n    vars:\n      x: ${a.out}\n"
-        "qemu:\n  binary: true\n  args: []\n",
+        "qemu:\n  binary: true\n  image: img\n  args: []\n",
     )
     monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
     with pytest.raises(ManifestError, match="cannot depend on itself"):
@@ -256,7 +299,7 @@ def test_target_rejects_reference_to_component_outside_stack(tmp_path, monkeypat
         # target's stack only contains 'a', but references sibling 'b' which
         # is never listed in this target's own stack
         "stack:\n  - component: a\n    image: img\n    vars:\n      x: ${b.out}\n"
-        "qemu:\n  binary: true\n  args: []\n",
+        "qemu:\n  binary: true\n  image: img\n  args: []\n",
     )
     monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
     with pytest.raises(ManifestError, match="not a component in this target's stack"):

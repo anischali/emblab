@@ -10,6 +10,7 @@ stack:
       input: ${fake-a.out}
 qemu:
   binary: "true"
+  image: fake-image
   args:
     - "-x"
     - "${fake-a.out}"

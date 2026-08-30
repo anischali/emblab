@@ -31,6 +31,7 @@ stack:
       bl33: ${barebox.images}/barebox-dt-2nd.img
 qemu:
   binary: qemu-system-aarch64
+  image: qemu-runner
   args:
     - "-cpu"
     - "cortex-a57"

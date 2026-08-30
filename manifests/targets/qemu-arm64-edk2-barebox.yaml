@@ -36,6 +36,7 @@ stack:
       arch: arm64
 qemu:
   binary: qemu-system-aarch64
+  image: qemu-runner
   args:
     - "-cpu"
     - "cortex-a57"
