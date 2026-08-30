@@ -97,13 +97,18 @@ def ensure_builddeps(image, component_name, builddeps, workspace, *, log=print):
     state.write_marker(marker_path, current_hash)
 
 
-def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, check=True, log=print):
     """Run `command` inside the provisioned container for `image`.
 
     Note: udocker's `--bindhome` is a bare boolean flag (no `=value` form —
     `--bindhome=false` is a syntax error); omitting it means "don't bind
     home", which is what we want. Volume mounts are `--volume=`, not `-v=`
     (udocker has no `-v` shorthand).
+
+    `check=False` is for callers like qemu.py that need the raw
+    CompletedProcess (e.g. to propagate QEMU's own exit code) rather than an
+    exception on a non-zero return — the normal build path always wants
+    `check=True` (the default) so a failed build command stops the pipeline.
     """
     args = ["run"]
     args.append(f"--volume={HELPERS_DIR}:{HELPERS_MOUNT}")
@@ -115,7 +120,7 @@ def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, l
     args.append(container_name(image))
     args.extend(command)
     log(f"[{image.name}] run: {' '.join(command)}")
-    _udocker(args, workspace, check=True)
+    return _udocker(args, workspace, check=check)
 
 
 def shell(image, workspace):
