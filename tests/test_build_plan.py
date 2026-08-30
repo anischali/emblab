@@ -16,7 +16,7 @@ from emblab import build as build_mod
 from emblab import manifests
 from emblab import qemu as qemu_mod
 from emblab import templating
-from emblab.errors import TemplateError
+from emblab.errors import BuildError, TemplateError
 
 TARGET_NAME = "qemu-arm64-secureboot"
 
@@ -568,7 +568,6 @@ def test_setup_step_runs_after_builddeps_installed_and_is_skipped_when_unchanged
         assert any(c == "echo setting-up" for c in run_calls), "setup_force must re-run setup"
 
 
-
 def test_stack_entry_patches_are_target_specific_extras_on_top_of_components_own(tmp_path, monkeypatch):
     """ADR-010: a target's stack-entry patches are extra, on top of whatever
     the component always applies via build.patches — not a replacement."""
@@ -656,6 +655,59 @@ def test_stack_entry_image_is_used_for_build(tmp_path, monkeypatch):
         build_mod.build("picks-image-target", tmp_path)
 
     assert ensured_images == ["img-b"]
+
+
+def test_shell_context_defaults_to_last_stack_entry_and_rejects_unknown_component(tmp_path, monkeypatch):
+    """`emblab shell <target>` (build.shell_context) needs a component's
+    image the same way build() does (ADR-009 — a component has none of its
+    own), defaults to whatever's last in the stack (most likely what you're
+    mid-iteration on) when no --component is given, and must reject a name
+    that isn't actually part of the target rather than silently picking
+    something."""
+    manifests_dir = tmp_path / "manifests"
+    (manifests_dir / "images").mkdir(parents=True)
+    (manifests_dir / "components" / "first").mkdir(parents=True)
+    (manifests_dir / "components" / "second").mkdir(parents=True)
+    (manifests_dir / "images" / "img-a.yaml").write_text("base_image: a\nprovision: []\n")
+    (manifests_dir / "images" / "img-b.yaml").write_text("base_image: b\nprovision: []\n")
+    (manifests_dir / "components" / "first" / "first.yaml").write_text(
+        "build:\n  vars: {}\n  command: echo hi\n"
+        "artifacts:\n  out: out.txt\n"
+    )
+    (manifests_dir / "components" / "second" / "second.yaml").write_text(
+        "build:\n  vars: {}\n  command: echo hi\n"
+        "artifacts:\n  out: out.txt\n"
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+
+    target = manifests.Target(
+        name="shell-target",
+        description="",
+        arch="fake",
+        stack=[
+            manifests.StackEntry(component="first", vars={}, image="img-a", builddeps=[], patches=[]),
+            manifests.StackEntry(component="second", vars={}, image="img-b", builddeps=[], patches=[]),
+        ],
+        qemu=manifests.Qemu(binary="true", args=[], image="img-a"),
+    )
+
+    def fake_ensure_source(workspace, component, patches, **kwargs):
+        return Path(workspace) / "src" / component.name
+
+    with patch("emblab.build.manifests.load_target", return_value=target), \
+         patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
+         patch("emblab.build.containers.ensure_image", return_value=None), \
+         patch("emblab.build.containers.ensure_builddeps", return_value=None):
+        image, src_dir = build_mod.shell_context("shell-target", tmp_path)
+        assert image.name == "img-b"
+        assert src_dir == tmp_path / "src" / "second"
+
+        image, src_dir = build_mod.shell_context("shell-target", tmp_path, "first")
+        assert image.name == "img-a"
+        assert src_dir == tmp_path / "src" / "first"
+
+        with pytest.raises(BuildError):
+            build_mod.shell_context("shell-target", tmp_path, "nonexistent")
 
 
 def test_target_arch_resolves_as_env_arch_template_token(tmp_path, monkeypatch):
