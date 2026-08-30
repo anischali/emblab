@@ -96,10 +96,33 @@ build:
   # description's Toolchain paragraph for why this replaced the earlier
   # from-source approach (and its now-removed GMP/MPFR/MPC patch, ccache
   # flag, gnat-12 builddep).
+  #
+  # UPDATED_SUBMODULES=1 — confirmed real and root-caused for real: coreboot's
+  # own Makefile.mk (not this project's) runs a bare, unconditional
+  # `git submodule update --init` (no path filter) at parse time unless this
+  # is already set to 1 — it isn't gated by any make target, so it ran even
+  # for a plain `defconfig`. That bare call ignores our own scoped
+  # source.submodules init entirely and tries to pull EVERY submodule listed
+  # in .gitmodules (confirmed via an isolated real repro outside any
+  # container: ffs, intel-sec-tools, libgfxinit, libhwbase,
+  # open-power-signing-utils, opensbi, stm, vboot, 3x amd/opensil,
+  # util/goswid, util/nvidia/cbootimage — none of which qemu-aarch64 needs).
+  # On a plain host filesystem that repro left the tree intact, just
+  # bloated; but a real `emblab build` of this target reproduced
+  # CONTEXT.md's long-standing "mystery source-tree-wipe" bug immediately
+  # after this same "Updating git submodules." line ran under udocker —
+  # confirmed twice, `Makefile`/`.git`/`configs/`/`src/`/etc. all gone,
+  # only `3rdparty/`, `payloads/`, `tests/`, `util/`, `spd/`,
+  # `Documentation/`, `build/` left. Root cause of the udocker-specific
+  # destructiveness itself is still NOT understood (the bare update alone
+  # doesn't explain it on a normal filesystem), but skipping the whole
+  # block entirely sidesteps it: we already handle the one submodule this
+  # mainboard needs (3rdparty/arm-trusted-firmware) via source.submodules,
+  # so this project never needed coreboot's own auto-update to run at all.
   command: >-
     set -e;
-    make XGCCPATH=/opt/xgcc/bin/ KBUILD_DEFCONFIG=${vars.defconfig} defconfig;
+    make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ KBUILD_DEFCONFIG=${vars.defconfig} defconfig;
     if [ -n "${vars.payload_conf}" ]; then printf '%s\n' "${vars.payload_conf}" >> .config; fi;
-    make XGCCPATH=/opt/xgcc/bin/ -j${env.JOBS}
+    make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ -j${env.JOBS}
 artifacts:
   rom: build/coreboot.rom
