@@ -1,0 +1,90 @@
+name: coreboot
+description: >
+  UNVERIFIED build command — unlike every other component here, there is no
+  barebox-arm64-poc reference invocation for coreboot to transcribe from,
+  so this is a first-principles best-effort against upstream coreboot
+  conventions, not yet run against a real clone (see CONTEXT.md's Next).
+
+  Builds coreboot's src/mainboard/emulation/qemu-aarch64 target. Unlike
+  edk2/barebox's own QEMU "-kernel" chain-load, coreboot never consumes
+  QEMU's -kernel fw_cfg loader — the only real way to hand a second-stage
+  bootloader to coreboot is to bundle it into CBFS as coreboot's own
+  payload at build time (same idea as edk2's target-optional FvBootDxe
+  bundling, ADR-010 — except here bundling is the only boot path, not an
+  alternative to an already-working chain-loaded one, since coreboot has
+  no chain-loaded option to fall back to). vars.payload_conf (below) is
+  how a target supplies that payload.
+
+  Toolchain: builds coreboot's own crossgcc (`make crossgcc-aarch64` —
+  confirmed against a real clone's util/crossgcc/Makefile.mk, whose
+  TOOLCHAIN_ARCHES uses "aarch64", not "arm64"). Pointing coreboot at the
+  image's external aarch64-linux-gnu- toolchain instead was tried for
+  real and confirmed NOT viable, not just unconfirmed: with
+  CONFIG_ANY_TOOLCHAIN=y (relaxing toolchain.mk's "coreboot toolchain"
+  `-v`-banner check to "any toolchain present"), the real build got as
+  far as compiling host tools before failing —
+  `gcc: error: unrecognized command-line option '-std=gnu23'`.
+  coreboot's `main` (Makefile.mk: `CFLAGS_common += -std=gnu23`) requires
+  a GCC with finalized C23 support, i.e. GCC 14+; Debian bookworm (this
+  project's base image) ships GCC 12.2.0 for both host `gcc` and
+  `aarch64-linux-gnu-gcc`, and bookworm-backports carries no newer `gcc`
+  package at all (checked: `apt-cache policy gcc-13 gcc-14` after adding
+  bookworm-backports returns nothing). crossgcc's own
+  `util/crossgcc/buildgcc` pins `GCC_VERSION=15.2.0` — well past that
+  requirement — confirming crossgcc isn't just "the documented, certain
+  path" but the only one that actually works against `main` right now, at
+  the cost of a slow from-source GCC/binutils build on first run. (Its
+  `crossgcc-ARCH` target also builds iasl as a side effect
+  (`build_iasl`), so no separate `iasl` package is needed the way the
+  CONFIG_ANY_TOOLCHAIN path required.)
+
+  vars.defconfig originally guessed "configs/config.emulation_qemu-aarch64"
+  (a plausible-looking name that doesn't actually exist upstream — real
+  names use underscores, e.g. config.emulation_qemu_aarch64_zstd /
+  _fit_support_timestamps). Neither real one is a clean minimal baseline
+  for our purposes (zstd adds unwanted ramstage compression;
+  fit_support_timestamps pulls in CONFIG_PAYLOAD_FIT_SUPPORT, which
+  conflicts with the plain CONFIG_PAYLOAD_ELF this component's
+  payload_conf uses) — both are confirmed (by reading them) to reduce to
+  just CONFIG_VENDOR_EMULATION=y + CONFIG_BOARD_EMULATION_QEMU_AARCH64=y
+  plus their own extras, so files/configs/config.emblab_qemu_aarch64 below
+  supplies exactly that minimal pair ourselves, copied into the clone's
+  own configs/ dir by build.files (same static-file mechanism ADR-007
+  already established for patches).
+
+  source.submodules is a list, not `true`: coreboot's .gitmodules carries
+  many vendor-specific 3rdparty/ trees (AMD OpenSIL, Intel STM, PPC
+  signing utils, opensbi, vboot, ...) that qemu-aarch64 needs none of —
+  confirmed against a real clone attempt, where a transient TLS failure
+  fetching the entirely-unrelated AMD OpenSIL submodule broke the whole
+  build. The mainboard's own Kconfig (`select
+  ARM64_USE_ARM_TRUSTED_FIRMWARE`) does need 3rdparty/arm-trusted-firmware
+  (and that submodule's own nested ones, pulled in recursively) — that's
+  the one real submodule dependency, so only its path is listed.
+source:
+  git: https://github.com/coreboot/coreboot.git
+  ref: main
+  path: coreboot
+  submodules:
+    - 3rdparty/arm-trusted-firmware
+build:
+  files:
+    - configs/config.emblab_qemu_aarch64
+  vars:
+    defconfig: configs/config.emblab_qemu_aarch64
+    # Empty by default (plain coreboot build, no bundled payload). Same
+    # conditionally-populated-var trick as edk2.yaml's fv_boot_app_flag/
+    # tf-a.yaml's bl32_flags: a target that wants a payload embedded sets
+    # this to one or more real Kconfig lines (e.g. CONFIG_PAYLOAD_ELF=y
+    # and CONFIG_PAYLOAD_FILE="..."), appended onto .config only when
+    # non-empty — Kbuild's own oldconfig/olddefconfig machinery re-syncs
+    # everything else, same as barebox.yaml's extra_conf comment describes.
+    payload_conf: ""
+  command: >-
+    set -e;
+    make crossgcc-aarch64 CPUS=${env.JOBS};
+    make KBUILD_DEFCONFIG=${vars.defconfig} defconfig;
+    if [ -n "${vars.payload_conf}" ]; then printf '%s\n' "${vars.payload_conf}" >> .config; fi;
+    make -j${env.JOBS}
+artifacts:
+  rom: build/coreboot.rom

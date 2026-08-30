@@ -444,6 +444,67 @@ Nothing in flight.
     (`chmod -R u+rwx`), not fixed in the driver. Either wrap the rmtree with
     an `onerror` handler that chmods-and-retries, or have `cmd_clean` run
     `udocker rm` on every tracked container first.
+12. `emblab build qemu-arm64-coreboot-barebox` — currently BLOCKED on a
+    real upstream coreboot bug, not an emblab manifest issue. 2026-08-30
+    session fixed every guessed detail this target originally shipped
+    with (all confirmed against real clones — see Proven): the
+    `crossgcc-aarch64` target name (was `crossgcc-arm64`); the defconfig
+    (`configs/config.emulation_qemu-aarch64` doesn't exist upstream —
+    replaced with a minimal fragment the component now supplies itself,
+    `manifests/components/coreboot/files/configs/config.emblab_qemu_aarch64`);
+    submodule scoping (was pulling in coreboot's entire unrelated
+    `3rdparty/` vendor-submodule set — see ADR-008's amendment); and
+    barebox's own defconfig (target had `efi_v8_defconfig`, an EFI/PE32
+    build wrong for coreboot's raw `PAYLOAD_ELF` — fixed to
+    `multi_v8_defconfig`, confirmed to produce the same `barebox-dt-2nd.img`
+    every other target uses). Pointing coreboot at the image's external
+    `aarch64-linux-gnu-` toolchain instead of building crossgcc was also
+    tried for real (via `CONFIG_ANY_TOOLCHAIN=y`) and confirmed NOT
+    viable: coreboot's `main` requires GCC 14+ (`-std=gnu23` in
+    `Makefile.mk`), the `gnu-aarch64` image only has GCC 12.2.0 (host and
+    cross), and bookworm-backports carries no newer `gcc` package at all —
+    reverted to `make crossgcc-aarch64` per explicit user direction after
+    presenting the tradeoff.
+    **The real, current blocker**: `make crossgcc-aarch64` itself fails
+    building coreboot's own toolchain — reproduced identically twice from
+    a clean clone — applying
+    `util/crossgcc/patches/gcc-15.2.0_asan_shadow_offset_callback.patch`:
+    the patch's diff header targets `gcc/asan.c`, but the `gcc-15.2.0`
+    tarball it's applied against has `gcc/asan.cc` (renamed upstream in
+    GCC at some point after the patch was last updated) — `patch` can't
+    auto-locate the file, prompts interactively for a filename with no
+    tty attached, and the patch is skipped/fails, aborting the whole
+    crossgcc build (`util/crossgcc/buildgcc`'s own `-y`/`--nocolor`
+    auto-answer flags, used by upstream's own Jenkins CI per
+    `Makefile.mk`'s `jenkins-build-toolchain` target, are NOT what our
+    `crossgcc-aarch64` command invokes — worth trying next). This is
+    upstream coreboot/GCC-tarball staleness on the currently-pinned
+    `ref: main`, not anything in this project's manifests.
+    **Also observed, real and 100% reproducible (not a one-off), but
+    root cause NOT understood**: immediately after that crossgcc failure,
+    the coreboot clone's top level is left stripped down to just
+    `3rdparty/`, `payloads/`, `tests/`, `util/` — `Makefile`, `src/`,
+    `configs/`, `.git`, `Documentation/`, etc. are all gone, confirmed via
+    `find -maxdepth 1` both times, on two independent clean clones. Not
+    disk space (282G free throughout). `emblab`'s own git repo is
+    unaffected — `workspace/src/coreboot`'s `git status` was initially
+    (wrongly) read as emblab's own repo status because `.git` itself was
+    among the missing paths, which is what surfaced this. coreboot's own
+    `clean-for-update` target (`rm -rf $(obj) .xcompile`, checked against
+    a fresh scratch clone) is NOT the cause — too narrow. Never
+    investigated further (would need tracing the actual `make`/`patch`
+    process under udocker/PRoot, e.g. checking whether `$(top)`/`pwd`
+    resolves differently than the real host bind-mount path under proot's
+    syscall emulation) — worth a closer look if this recurs on a
+    component that isn't already blocked upstream, since silently losing
+    most of a source tree is a more serious class of udocker/PRoot issue
+    than the container-registry flakiness ADR-012 already documented.
+    Next attempt: either retry with `BUILDGCC_OPTIONS=-y` (skips the
+    interactive prompt, may or may not actually fix the patch mismatch),
+    hand-fix the patch's path (`gcc/asan.c` -> `gcc/asan.cc`) via this
+    project's own patch-application mechanism if that's viable for
+    crossgcc's internal patches, or pin `coreboot`'s `ref` to a commit
+    before this GCC 15.2.0 bump.
 
 ## Open questions
 - Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox`,
