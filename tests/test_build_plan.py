@@ -345,7 +345,7 @@ def test_build_files_content_change_triggers_rebuild(tmp_path, monkeypatch):
         description="",
         arch="fake",
         stack=[manifests.StackEntry(component="frag", vars={}, image="img", builddeps=[], patches=[])],
-        qemu=manifests.Qemu(binary="true", args=[]),
+        qemu=manifests.Qemu(binary="true", args=[], image="img"),
     )
 
     component = manifests.load_component("frag")
@@ -396,7 +396,7 @@ def test_artifacts_path_resolves_vars_and_env_tokens(tmp_path, monkeypatch):
         description="",
         arch="riscv64",
         stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[], patches=[])],
-        qemu=manifests.Qemu(binary="true", args=[]),
+        qemu=manifests.Qemu(binary="true", args=[], image="img"),
     )
 
     component = manifests.load_component("comp")
@@ -434,7 +434,7 @@ def test_directory_artifact_copied_recursively(tmp_path, monkeypatch):
         description="",
         arch="fake",
         stack=[manifests.StackEntry(component="dirart", vars={}, image="img", builddeps=[], patches=[])],
-        qemu=manifests.Qemu(binary="true", args=[]),
+        qemu=manifests.Qemu(binary="true", args=[], image="img"),
     )
 
     component = manifests.load_component("dirart")
@@ -475,7 +475,7 @@ def test_builddeps_installed_once_then_skipped_on_rebuild(tmp_path, monkeypatch)
         description="",
         arch="fake",
         stack=[manifests.StackEntry(component="deps", vars={}, image="img", builddeps=["foo-tool"], patches=[])],
-        qemu=manifests.Qemu(binary="true", args=[]),
+        qemu=manifests.Qemu(binary="true", args=[], image="img"),
     )
 
     component = manifests.load_component("deps")
@@ -528,7 +528,7 @@ def test_stack_entry_patches_are_target_specific_extras_on_top_of_components_own
         description="",
         arch="fake",
         stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[], patches=["0002-target-extra.patch"])],
-        qemu=manifests.Qemu(binary="true", args=[]),
+        qemu=manifests.Qemu(binary="true", args=[], image="img"),
     )
 
     component = manifests.load_component("comp")
@@ -571,7 +571,7 @@ def test_stack_entry_image_is_used_for_build(tmp_path, monkeypatch):
         description="",
         arch="fake",
         stack=[manifests.StackEntry(component="comp", vars={}, image="img-b", builddeps=[], patches=[])],
-        qemu=manifests.Qemu(binary="true", args=[]),
+        qemu=manifests.Qemu(binary="true", args=[], image="img"),
     )
 
     component = manifests.load_component("comp")
@@ -612,7 +612,7 @@ def test_target_arch_resolves_as_env_arch_template_token(tmp_path, monkeypatch):
         description="",
         arch="riscv64",
         stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[], patches=[])],
-        qemu=manifests.Qemu(binary="true", args=[]),
+        qemu=manifests.Qemu(binary="true", args=[], image="img"),
     )
 
     component = manifests.load_component("comp")
@@ -665,7 +665,7 @@ def test_component_not_referencing_env_arch_is_structurally_unaffected(tmp_path,
         description="",
         arch="riscv64",
         stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[], patches=[])],
-        qemu=manifests.Qemu(binary="true", args=[]),
+        qemu=manifests.Qemu(binary="true", args=[], image="img"),
     )
 
     component = manifests.load_component("comp")
@@ -713,7 +713,7 @@ def test_component_arch_var_with_no_default_requires_target_to_set_it(tmp_path, 
         description="",
         arch="riscv64",
         stack=[manifests.StackEntry(component="comp", vars={}, image="img", builddeps=[], patches=[])],
-        qemu=manifests.Qemu(binary="true", args=[]),
+        qemu=manifests.Qemu(binary="true", args=[], image="img"),
     )
 
     component = manifests.load_component("comp")

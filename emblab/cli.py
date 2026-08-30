@@ -88,9 +88,6 @@ def cmd_doctor(args):
     checks = [
         ("git", ["git", "--version"]),
         ("udocker", ["udocker", "--version"]),
-        ("qemu-system-aarch64", ["qemu-system-aarch64", "--version"]),
-        ("qemu-system-riscv64", ["qemu-system-riscv64", "--version"]),
-        ("qemu-system-arm", ["qemu-system-arm", "--version"]),
     ]
     ok = True
     for name, cmd in checks:

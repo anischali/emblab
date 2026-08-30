@@ -274,6 +274,99 @@ forking the component or affecting targets that don't want it.
   still open, see Next. Offline-tested only (new `state.py`/`build.py`
   mechanism); no real `fit-image` build has exercised `setup` yet.
 
+- 2026-08-30: **ADR-012 (containerize QEMU too) — built AND verified for
+  real**. `emblab run` no longer execs the host's native `qemu-system-*`
+  binary (ADR-003's decision) — it runs `qemu.binary` inside a new shared
+  `manifests/images/qemu-runner.yaml` udocker container (arch-agnostic:
+  `qemu-system-arm` + `qemu-system-misc` apt packages cover aarch64/arm/
+  riscv64), with the target's whole `workspace/artifacts/<target>/` tree
+  bind-mounted at the same host path so resolved `${component.key}` args
+  need no rewriting. Every target's `qemu:` block gained a required
+  `image:` field (same pattern as a stack entry's own `image:`, ADR-009) —
+  all 7 existing targets point it at `qemu-runner`. `emblab doctor` no
+  longer checks for host `qemu-system-*` binaries — `git` + `udocker` are
+  now the only two host prerequisites. 68/68 tests pass (offline).
+  **Real, surfaced-and-fixed bug along the way**: `qemu-system-arm`/
+  `-misc`'s hard dependency on `libibverbs1` (RDMA live-migration support,
+  never used here) has a postinst that calls `addgroup`/`groupadd` to
+  create the system `rdma` group — real group/user creation genuinely
+  fails under udocker's unprivileged execution, confirmed three different
+  ways: default proot mode (`groupadd: failure while writing changes to
+  /etc/group`), `R1` (pure runc rootless namespace — apt's own privilege
+  drop to `_apt` fails outright: a single-uid-mapped namespace has no room
+  for a second uid), and `R2` (proot-on-runc — bind-mounts the *host's
+  real* `/etc/group` in for uid/gid consistency, so the write is correctly
+  refused, not a bug). Fixed by no-op-stubbing `groupadd`/`useradd`/
+  `addgroup`/`adduser` in `qemu-runner.yaml`'s `provision:` before the
+  package install — nothing emblab runs needs the `rdma` group or any
+  other system account to actually exist. With that fix, real
+  `apt-get install` + `qemu-system-riscv64 --version`/`qemu-system-aarch64
+  --version` both confirmed against a real provisioned
+  `emblab-qemu-runner` container. Then **`emblab build` +
+  `emblab run qemu-riscv64-opensbi-barebox` end-to-end, from a clean
+  `workspace/`, through the new containerized path**: real OpenSBI banner,
+  S-mode handoff, and barebox reaching an interactive
+  `barebox@riscv-virtio,qemu:/` shell prompt on serial — the exact same
+  real-boot behavior already proven under the old host-exec path, now
+  reproduced with QEMU itself running inside `udocker`, confirming
+  udocker's `run` really does pass interactive stdio through correctly for
+  a long-running QEMU session (not just short build commands, which was
+  the only thing proven before).
+- 2026-08-30: **`qemu-runner` broadened to genuinely every Debian
+  `qemu-system-*` split package**, not just arm+riscv64 (the original cut
+  only covered what today's 7 targets happen to need — flagged by the user
+  as underselling the image's own "arch-agnostic" description). Added
+  `qemu-system-x86`, `qemu-system-ppc`, `qemu-system-mips`,
+  `qemu-system-sparc` to `provision:` (`qemu-system-s390x` deliberately left
+  out — it isn't a real Debian package name on amd64; `qemu-system-misc`
+  already ships the s390x binary, confirmed via `apt-cache policy
+  qemu-system-s390x` showing no candidate and a direct install attempt
+  resolving to "already the newest version"). Verified for real: a full
+  `apt-get install` of the broadened list against a real
+  `emblab-qemu-runner` container produced all 31 `qemu-system-*` binaries
+  Debian ships (`ls /usr/bin/qemu-system-*`), with `qemu-system-x86_64`,
+  `qemu-system-ppc64`, and `qemu-system-s390x` each individually confirmed
+  via `--version`; re-ran `emblab run qemu-riscv64-opensbi-barebox`
+  afterward and it correctly skipped re-provisioning (marker matched) and
+  booted to the same real barebox prompt as before.
+  **Also surfaced real udocker flakiness while iterating on this** (not an
+  emblab bug, but worth knowing): `udocker rm` on a container repeatedly
+  printed `Error: invalid container json metadata` while still actually
+  deleting the container directory, and at least once a fresh `udocker
+  create` for the exact same container *name* (immediately after a
+  same-session `rm` of that name) silently failed to write `container.json`
+  at all, leaving a directory with only `imagerepo.name`/`ROOT` that then
+  made every subsequent `udocker run` against that name fail the same way.
+  Diagnosed (not by inspecting udocker's source, just from directory
+  contents) by comparing against a known-good container's directory
+  (`container.json` + `.mountpoints` present) and noticing udocker tracks
+  names as plain symlinks under `workspace/udocker/containers/<name> ->
+  <uuid>`, not a JSON registry — a dangling one of those was also observed
+  once after a partially-failed `rm`. Worked around by hand each time:
+  delete the broken container directory and any dangling name-symlink
+  directly with `rm -rf`/`rm -f` (not `udocker rm`, which was itself
+  unreliable in the same session), then retry `create`. Never reproduced
+  against a *new* container name — only ever on a name that had just been
+  through a `create`+`rm` cycle in the same session — so it looks like a
+  udocker-internal race/cleanup bug tied to name reuse, not anything
+  `containers.py` itself is doing wrong. Not worth a driver-level
+  workaround unless it recurs against real `emblab build`/`emblab run`
+  usage (as opposed to the unusually rapid manual create/rm/setup cycling
+  this investigation did) — logged here so a future session doesn't
+  re-diagnose it from scratch.
+- Unrelated to ADR-012: `workspace/udocker/containers/.../ROOT/usr/lib/modules`
+  turned up with mode `000` (owned by the invoking user, but unreadable even
+  by them) mid-session, which crashed a `shutil.rmtree` during `emblab clean
+  --all` with a raw `PermissionError` traceback instead of a clean error.
+  Root cause not fully investigated — looked like udocker's PRoot backend
+  preserving/emulating a root-only permission bit from the guest rootfs
+  literally on the host filesystem. Worked around by hand
+  (`chmod -R u+rwx` before retrying the clean), not fixed in the driver.
+  Worth a `containers.py`/`cli.py cmd_clean` follow-up if it recurs: either
+  `shutil.rmtree(..., onerror=...)` with a chmod-and-retry handler, or
+  `udocker rm` on tracked containers before ever touching `workspace/udocker`
+  with `shutil.rmtree` directly.
+
 ## In progress
 Nothing in flight.
 
@@ -325,6 +418,19 @@ Nothing in flight.
    `keystore.cfg` fragment `barebox.yaml`'s `vars.extra_conf` (see Proven)
    already knows how to consume, opt-in via a var so today's unsigned
    `qemu-arm64-fit` target is unaffected.
+10. ADR-012 (containerized QEMU) is real-verified for
+    `qemu-riscv64-opensbi-barebox` only — the 6 arm64 targets all point
+    `qemu.image` at the same `qemu-runner` image and share the exact same
+    `containers.run()` path, so this is low-risk, but none of them has
+    actually been re-run through it yet (items 1/3/7 above, whenever they're
+    next attempted, will exercise it for arm64 for the first time).
+11. `cmd_clean --all`'s `shutil.rmtree(WORKSPACE)` can crash with a raw
+    `PermissionError` (see Proven's "Unrelated to ADR-012" entry) if a
+    udocker container under `workspace/udocker` has a directory with mode
+    `000` in it — happened once this session, worked around by hand
+    (`chmod -R u+rwx`), not fixed in the driver. Either wrap the rmtree with
+    an `onerror` handler that chmods-and-retries, or have `cmd_clean` run
+    `udocker rm` on every tracked container first.
 
 ## Open questions
 - Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox`,
@@ -347,4 +453,11 @@ Nothing in flight.
 - `udocker` at `~/.local/bin/udocker`. emblab sets `UDOCKER_DIR` to
   `workspace/udocker` (project-local), never touches `~/.udocker`.
 - `qemu-system-aarch64`, `qemu-system-riscv64`, `qemu-system-arm` are
-  already installed at `/usr/bin` on this machine.
+  already installed at `/usr/bin` on this machine, but as of ADR-012 emblab
+  no longer uses them — `qemu-runner`'s own containerized copies are what
+  `emblab run` actually execs now.
+- `runc`, `newuidmap`, `unshare` are also present on this machine (checked
+  while investigating ADR-012's `libibverbs1` postinst failure) — not used
+  by emblab (default proot mode, same as every other image, is what worked
+  once `groupadd`/`useradd` were stubbed), but useful to know they're there
+  if a future image ever needs `udocker setup --execmode=R1`/`R2`.

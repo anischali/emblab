@@ -1,7 +1,10 @@
 # ADR-003: Build inside containers, run QEMU on the host
 
 ## Status
-Accepted
+Superseded by ADR-012 — QEMU is now also containerized. The Context below
+(KVM passthrough, serial/display access) is kept for the record; ADR-012
+explains why it no longer justified a host-exec requirement for this
+project's targets specifically.
 
 ## Context
 Build toolchains benefit from container isolation (pinned package versions,

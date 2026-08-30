@@ -20,8 +20,7 @@ emblab list
 `bootstrap.sh` only touches PyPI (a venv + `pip install -e .`) — it does not
 clone any firmware source or pull any container image, so it finishes in
 well under a minute on a normal connection. It ends by running `emblab
-doctor`, which checks for `git`, `udocker`, and the `qemu-system-*` binaries
-your target architectures need.
+doctor`, which checks for `git` and `udocker`.
 
 ## Host prerequisites
 
@@ -33,10 +32,12 @@ your target architectures need.
   Windows) — the manifests and CLI are identical there, only the host
   substrate differs. See `docs/architecture/decisions/ADR-002-*.md`.
 - `git`.
-- The `qemu-system-*` binaries for whichever architectures you're
-  targeting (e.g. `qemu-system-aarch64`), installed via your host package
-  manager. emblab runs QEMU natively on the host, never inside a container
-  — see `docs/architecture/decisions/ADR-003-*.md`.
+
+That's it — as of ADR-012, `qemu-system-*` is no longer a host prerequisite.
+Both building and running now happen inside udocker containers; `emblab run`
+executes the target's `qemu.binary` inside its declared `qemu.image`
+container (see `docs/architecture/decisions/ADR-012-*.md`), so `udocker` is
+the only real dependency beyond Python/git.
 
 ## How it's organized
 
@@ -106,6 +107,8 @@ each manifest's `description:` for provenance. The one exception is
 2. New target: add `manifests/targets/<name>.yaml` — an ordered `stack` of
    `{component, vars}`, wiring cross-component artifacts via
    `${component.artifact}` in the `vars` of whichever component needs them,
-   plus a `qemu` block (`binary` + `args`, same token syntax available).
+   plus a `qemu` block (`binary` + `image` + `args`, same token syntax
+   available — `image` is almost always `qemu-runner`, the shared
+   arch-agnostic image that has every `qemu-system-*` binary installed).
 3. `emblab show target <name>` to sanity-check it loads; `emblab build
    <name>` to try it for real.
