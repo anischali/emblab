@@ -379,6 +379,49 @@ forking the component or affecting targets that don't want it.
   `_parse_submodules`, rejecting anything that isn't `true`/`false`/a
   string list with a clear `ManifestError`. New offline tests in both
   `test_sources.py` and `test_manifests.py`; 70/70 tests pass.
+- 2026-08-31: **ADR-013: `emblab shell` devshell + non-root + bash
+  completion**, user-requested ("devshell on components or targets", "an
+  improved shell without root and bash completion"). New
+  `build.shell_context()` resolves a target's stack entry (default: last
+  one) the same way `build()` does per-component — same
+  `ensure_image`/`ensure_builddeps`/`ensure_source` calls, so the shell
+  matches a real build environment — and `emblab shell NAME
+  [--component X]` uses it when `NAME` is a target, falling back to the
+  previous raw-image behavior otherwise. `containers.shell()` now uses
+  udocker's own documented `--hostauth --user=<host user>` for a
+  non-root shell (confirmed against a real container — no
+  `useradd`/`groupadd` needed, unlike ADR-012's account-creation finding,
+  since this borrows the host's own passwd/group entry instead of
+  creating one) and launches `bash --rcfile helpers/emblab-shell.bashrc
+  -i` instead of `sh`. The rcfile turned out to be load-bearing, not
+  cosmetic: confirmed against a real container that the borrowed
+  `--hostauth` user has no real `$HOME` inside the container, so Debian's
+  bash-completion-sourcing block (which lives in `~/.bashrc`, not the
+  system-wide `/etc/bash.bashrc`) silently never ran without it —
+  `shopt progcomp` was already on by bash's own default, but
+  `complete -p git` stayed empty; with the rcfile, `complete -p -D` shows
+  the dynamic loader registered and a forced load
+  (`_completion_loader git`) does register `git`'s real completion.
+  `bash-completion` added to all four images' `provision:`
+  (`gnu-aarch64`/`gnu-riscv64`/`go`/`qemu-runner`). New offline test
+  `test_shell_context_defaults_to_last_stack_entry_and_rejects_unknown_component`;
+  also dry-ran the real `cli.py` argparse + `cmd_shell` dispatch (all four
+  paths: target default-component, target explicit-component, raw-image
+  fallback, and `--component` correctly rejected on a non-target) with
+  container calls mocked, and `build.shell_context()` against the real
+  `qemu-arm64-coreboot-barebox` target (unmocked manifests) to confirm it
+  resolves `coreboot`/`gnu-aarch64` by default and `barebox`/`gnu-aarch64`
+  when `--component barebox` is given. 72/72 offline tests pass. Also
+  caught and fixed a stale ADR-011 claim while writing this ("`build.setup`
+  runs before builddeps are installed") — no longer true since this
+  session's earlier `gnat-12`-driven ordering fix moved `ensure_builddeps`
+  ahead of `build.setup` too; ADR-011 updated to match.
+  **NOT yet verified interactively** (an actual TTY session, tab-press
+  included, can't be driven from here) — the underlying mechanisms (bash
+  launch, `--rcfile` sourcing, dynamic-loader registration, `--hostauth`
+  identity) are each confirmed for real via non-interactive
+  `bash -i -c '...'` probes against the real `emblab-gnu-aarch64`
+  container, but a live session is the real proof, see Next.
 
 ## In progress
 Nothing in flight.
@@ -591,6 +634,14 @@ Nothing in flight.
     same as anything else in that tree, forcing `sources.py`'s own
     patches-hash re-apply logic to redo it on the next build (expected
     behavior, not new risk).
+13. **ADR-013's `emblab shell` devshell** — every individual mechanism
+    (`--hostauth`/`--user=` non-root, `bash --rcfile ... -i`, the
+    bash-completion dynamic loader) is confirmed against a real container
+    via non-interactive `bash -i -c '...'` probes, but nobody has actually
+    sat at a live `emblab shell qemu-arm64-coreboot-barebox` (or any other
+    target) session and pressed TAB for real, or confirmed the prompt/
+    `cd`-ability/general usability feels right end to end. Cheap to check
+    next time any target's build environment needs poking at by hand.
 
 ## Open questions
 - Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox`,
