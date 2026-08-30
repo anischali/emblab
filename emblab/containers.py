@@ -138,7 +138,15 @@ def shell(image, workspace, *, workdir="/", bind_mounts=(), log=print):
 
     bash, not sh, so the image's own bash-completion package (see e.g.
     gnu-aarch64.yaml's provision:) can actually do something — plain `sh`
-    has no completion at all.
+    has no completion at all. `--rcfile helpers/emblab-shell.bashrc`
+    (bind-mounted alongside fitkeys-ctl/tsa-stamp below) is needed on top
+    of that: bash normally sources ~/.bashrc, but --hostauth's borrowed
+    host user has no real $HOME inside the container, so there's no
+    ~/.bashrc to find Debian's own bash-completion-sourcing block (it lives
+    there, from /etc/skel/.bashrc, not in the system-wide /etc/bash.bashrc)
+    — confirmed against a real container: without an explicit --rcfile,
+    `shopt progcomp` was already on (bash's own default) but no completion
+    function ever got registered.
 
     Same helpers/ bind mount as run() — fitkeys-ctl, tsa-stamp, etc. are on
     PATH here too."""
@@ -152,6 +160,6 @@ def shell(image, workspace, *, workdir="/", bind_mounts=(), log=print):
         args.append(f"--volume={host_path}:{container_path}")
     args.append(f"--workdir={workdir}")
     args.append(container_name(image))
-    args.append("bash")
+    args.extend(["bash", "--rcfile", f"{HELPERS_MOUNT}/emblab-shell.bashrc", "-i"])
     log(f"[{image.name}] shell: {workdir}")
     subprocess.run(["udocker", *args], env=_udocker_env(workspace))
