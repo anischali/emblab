@@ -1,0 +1,29 @@
+description: >
+  Runs the `qemu-system-*` binaries themselves, containerized (see ADR-012 —
+  supersedes ADR-003's host-exec decision). Shared by every target's `qemu:`
+  block: Debian's `qemu-system-arm` package provides both `qemu-system-arm`
+  and `qemu-system-aarch64`; `qemu-system-misc` provides `qemu-system-riscv64`
+  — covers every target that exists today (all are arm64 or riscv64). No
+  cross-toolchain here — this image never builds anything, it only runs the
+  emulator against artifacts already built by other components' images.
+base_image: docker.io/library/debian:bookworm-slim
+provision:
+  # qemu-system-arm/-misc depend on libibverbs1 (RDMA live-migration support
+  # emblab never uses), whose postinst calls `addgroup`/`groupadd` to create
+  # the system 'rdma' group — real group/user creation genuinely fails under
+  # udocker's unprivileged execution (confirmed against default proot mode
+  # AND both its runc-backed modes, R1/R2: R1 can't setuid/setgid to any
+  # non-mapped uid in a single-uid rootless namespace; R2 bind-mounts the
+  # HOST's real /etc/group into the container for uid/gid consistency, so a
+  # write there is correctly refused — real root privilege genuinely isn't
+  # available in any of udocker's modes, by design). No functional loss:
+  # nothing emblab runs needs the 'rdma' group or any other system account
+  # to actually exist, so no-op stubs ahead of dpkg's postinst are enough.
+  - >-
+    for n in groupadd useradd addgroup adduser; do
+    printf '#!/bin/sh\nexit 0\n' > /usr/sbin/$n; chmod +x /usr/sbin/$n; done
+  - apt-get update
+  - >-
+    apt-get install -y --no-install-recommends
+    qemu-system-arm qemu-system-misc
+env: {}
