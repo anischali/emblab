@@ -45,6 +45,55 @@ def _resolve_remote_ref(url, ref):
     return lines[0].split()[0] if lines else None
 
 
+SUBMODULE_INIT_ATTEMPTS = 3
+
+
+def _reclone(dest, component):
+    shutil.rmtree(dest)
+    subprocess.run(
+        [
+            "git", "clone", "--depth", "1",
+            "--branch", component.source.ref,
+            component.source.git, str(dest),
+        ],
+        check=True,
+    )
+
+
+def _run_submodule_update(cmd, dest, component, *, log):
+    """`git submodule update --init --recursive --depth 1` with nested
+    submodules-of-submodules (e.g. coreboot's arm-trusted-firmware -> its
+    own mbed-tls -> mbed-tls's own "framework") is real, reproducibly
+    flaky on this project — confirmed repeatedly against coreboot, a
+    different nested submodule failing each time ("No such file or
+    directory" for a FETCH_HEAD/shallow.lock path git should have just
+    created under .git/modules/.../modules/...), never a
+    network-reachability error. A failed attempt also leaves
+    .git/modules/<submodule> corrupted enough that git itself cascades
+    ("not a git repository", then "pathspec did not match" on the next
+    attempt against the SAME tree) — confirmed for real: a bare retry of
+    the identical command is not enough. Each retry (not the first
+    attempt) re-clones the whole component from scratch first, onto a
+    known-pristine tree, same as ensure_source's own ref-moved/
+    patches-changed re-clone path."""
+    last_error = None
+    for attempt in range(1, SUBMODULE_INIT_ATTEMPTS + 1):
+        if attempt > 1:
+            log(f"[{component.name}] re-cloning before retry {attempt}/{SUBMODULE_INIT_ATTEMPTS}")
+            _reclone(dest, component)
+        try:
+            subprocess.run(cmd, cwd=dest, check=True)
+            return
+        except subprocess.CalledProcessError as exc:
+            last_error = exc
+            if attempt < SUBMODULE_INIT_ATTEMPTS:
+                log(
+                    f"[{component.name}] git submodule update failed "
+                    f"(attempt {attempt}/{SUBMODULE_INIT_ATTEMPTS}), retrying"
+                )
+    raise last_error
+
+
 def _init_submodules(dest, component, *, log=print):
     submodules = component.source.submodules
     if not submodules:
@@ -52,11 +101,11 @@ def _init_submodules(dest, component, *, log=print):
     base = ["git", "submodule", "update", "--init", "--recursive", "--depth", "1"]
     if submodules is True:
         log(f"[{component.name}] initializing git submodules")
-        subprocess.run(base, cwd=dest, check=True)
+        _run_submodule_update(base, dest, component, log=log)
     else:
         paths = list(submodules)
         log(f"[{component.name}] initializing git submodules ({', '.join(paths)})")
-        subprocess.run([*base, "--", *paths], cwd=dest, check=True)
+        _run_submodule_update([*base, "--", *paths], dest, component, log=log)
 
 
 def _apply_patches(dest, component, patches, *, log=print):

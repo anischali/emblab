@@ -3,6 +3,7 @@ submodule init, patch application) — all git calls are mocked, no real
 network/filesystem git operations happen.
 """
 
+import subprocess
 from unittest.mock import patch
 
 from emblab import manifests, sources
@@ -67,6 +68,40 @@ def test_ensure_source_skips_submodules_by_default(tmp_path):
         sources.ensure_source(tmp_path, component, component.build.patches)
 
     assert not any(c[:2] == ["git", "submodule"] for c in calls)
+
+
+def test_init_submodules_retries_with_a_fresh_reclone_on_failure(tmp_path):
+    """Real, reproducible flakiness in `git submodule update --init
+    --recursive` (confirmed against coreboot: a different nested submodule
+    fails each time, and a failed attempt leaves .git/modules/<submodule>
+    corrupted enough that a bare retry of the same command fails
+    differently again) means a retry needs a fresh re-clone first, not
+    just the same command run again."""
+    component = _component(submodules=True)
+    calls = []
+    submodule_attempts = 0
+
+    def fake_run(args, **kwargs):
+        nonlocal submodule_attempts
+        calls.append(args)
+        if args[:2] == ["git", "submodule"]:
+            submodule_attempts += 1
+            if submodule_attempts == 1:
+                raise subprocess.CalledProcessError(1, args)
+        return type("Result", (), {"returncode": 0, "stdout": ""})()
+
+    with patch("emblab.sources.subprocess.run", side_effect=fake_run), \
+         patch("emblab.sources.shutil.rmtree"):
+        sources.ensure_source(tmp_path, component, component.build.patches)
+
+    kinds = [
+        "clone" if c[1] == "clone" else "submodule" if c[:2] == ["git", "submodule"] else "other"
+        for c in calls
+    ]
+    assert kinds.count("clone") == 2, "a failed attempt must re-clone before retrying"
+    assert kinds.count("submodule") == 2
+    # clone, submodule (fails), reclone, submodule (retry, succeeds) — in that order
+    assert kinds == ["clone", "submodule", "clone", "submodule"]
 
 
 def test_ensure_source_initializes_submodules_before_applying_patches(tmp_path, monkeypatch):
