@@ -5,6 +5,7 @@ version). All state (pulled images, created containers) lives under
 `emblab clean --all` and never touches the user's global ~/.udocker.
 """
 
+import getpass
 import os
 import subprocess
 from pathlib import Path
@@ -126,13 +127,31 @@ def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, c
 def shell(image, workspace, *, workdir="/", bind_mounts=(), log=print):
     """Interactive shell inside the provisioned container, for debugging a
     build (or, via build.py's shell_context(), a component's real build
-    environment) by hand. Same helpers/ bind mount as run() — fitkeys-ctl,
-    tsa-stamp, etc. are on PATH here too."""
-    args = ["run", f"--volume={HELPERS_DIR}:{HELPERS_MOUNT}"]
+    environment) by hand.
+
+    Non-root: `--hostauth --user=<host user>` maps the invoking host
+    account's real passwd/group entry into the container (confirmed against
+    a real provisioned container — `whoami`/`id` resolve to the host user,
+    no useradd/groupadd required), sidestepping ADR-012's finding that real
+    account creation fails under udocker's unprivileged execution — this
+    doesn't create anything, just borrows the host's own entry.
+
+    bash, not sh, so the image's own bash-completion package (see e.g.
+    gnu-aarch64.yaml's provision:) can actually do something — plain `sh`
+    has no completion at all.
+
+    Same helpers/ bind mount as run() — fitkeys-ctl, tsa-stamp, etc. are on
+    PATH here too."""
+    args = [
+        "run",
+        "--hostauth",
+        f"--user={getpass.getuser()}",
+        f"--volume={HELPERS_DIR}:{HELPERS_MOUNT}",
+    ]
     for host_path, container_path in bind_mounts:
         args.append(f"--volume={host_path}:{container_path}")
     args.append(f"--workdir={workdir}")
     args.append(container_name(image))
-    args.append("sh")
+    args.append("bash")
     log(f"[{image.name}] shell: {workdir}")
     subprocess.run(["udocker", *args], env=_udocker_env(workspace))

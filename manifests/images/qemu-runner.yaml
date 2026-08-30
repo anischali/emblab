@@ -25,5 +25,5 @@ provision:
   - apt-get update
   - >-
     apt-get install -y --no-install-recommends
-    qemu-system-arm qemu-system-misc
+    qemu-system-arm qemu-system-misc bash-completion
 env: {}

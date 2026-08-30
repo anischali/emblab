@@ -11,6 +11,6 @@ provision:
     apt-get install -y --no-install-recommends
     build-essential git python3 python3-pip device-tree-compiler bison flex
     libssl-dev pkg-config bc rsync unzip lz4 gcc-riscv64-linux-gnu
-    g++-riscv64-linux-gnu
+    g++-riscv64-linux-gnu bash-completion
 env:
   CROSS_COMPILE: riscv64-linux-gnu-
