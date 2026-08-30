@@ -551,6 +551,46 @@ Nothing in flight.
     reused across runs, not recreated — ADR-004), which should also help
     resilience against the mystery source-tree-wipe bug below since the
     cache lives outside the source tree.
+    **User then asked to avoid building GMP/MPFR/MPC/binutils/GCC from
+    source entirely, "install the deps instead of building them"**. Read
+    the real `util/crossgcc/buildgcc` script in full to check feasibility:
+    confirmed binutils/GCC 15.2.0 themselves have no install-instead-of-
+    build option (no flag, and no matching pre-built aarch64-elf bare-metal
+    GCC 15.2.0-with-coreboot's-patches exists as a distro package — same
+    conclusion as the already-ruled-out CONFIG_ANY_TOOLCHAIN route above).
+    But GMP/MPFR/MPC are different: they're pure host build-prerequisites
+    for GCC's own configure (binutils's own build never references them at
+    all — confirmed, `build_BINUTILS()` has no `--with-gmp`/etc), the
+    `-P GCC` package list (`PACKAGES="GMP MPFR MPC BINUTILS GCC"`) is driven
+    entirely by one script variable with no other conditional gating the
+    download/build loops, and `bootstrap_GCC()`/`configure_GCC()`'s
+    `--with-gmp=$TARGETDIR`/`--with-mpfr=$TARGETDIR`/`--with-mpc=$TARGETDIR`
+    just needs to be **absent** for GCC's configure to auto-detect the
+    system copies instead (standard distro-packaging practice, not a hack).
+    New `files/0001-crossgcc-use-system-gmp-mpfr-mpc.patch` (against
+    `util/crossgcc/buildgcc`, ADR-007's mechanism, first patch for this
+    component) drops `GMP MPC MPFR` from that package list and removes the
+    three `--with-*` flags from both functions — generated as a real `git
+    diff` directly against the actual clone under
+    `workspace/src/coreboot` (not hand-reconstructed), and confirmed with
+    `git apply --check` against that same clone (reverted after generating
+    the patch, clone left unmodified). `libgmp-dev`/`libmpfr-dev`/
+    `libmpc-dev` were already in the target's `builddeps` from the earlier
+    session (added in case buildgcc's own build of GMP/MPFR/MPC needed
+    them as build-time deps — turns out they're now needed for a different
+    reason, providing the system copies directly); Debian bookworm's
+    versions (GMP 6.2.1, MPFR 4.2.0, MPC 1.3.1) are well above GCC 15.2.0's
+    minimums. 71/71 offline tests pass (no new test — same precedent as
+    the FvBootDxe/dummy-hwrng patches, which also aren't offline-content-
+    tested, just `git apply --check`-verified and documented here). NONE of
+    this session's coreboot-toolchain changes (setup/builddeps reorder,
+    `gnat-12`, `ccache`, or this new patch) are real-build-verified yet —
+    this doesn't touch the still-open `asan.c`/`.cc` or mystery-source-tree-
+    wipe issues below, which need a real run to re-check; the source-tree
+    wipe bug in particular could also wipe this new patch's applied state,
+    same as anything else in that tree, forcing `sources.py`'s own
+    patches-hash re-apply logic to redo it on the next build (expected
+    behavior, not new risk).
 
 ## Open questions
 - Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox`,

@@ -87,7 +87,21 @@ build:
   # of command via its own marker, so a retry after a defconfig/build
   # failure (or any other command-only change) does NOT re-trigger the
   # whole crossgcc build — only `emblab build --setup-force` does.
-  setup: make crossgcc-aarch64 CPUS=${env.JOBS}
+  # BUILDGCC_OPTIONS=-y turns on buildgcc's own `--ccache` flag (confirmed
+  # against the real util/crossgcc/buildgcc script — same flag coreboot's
+  # own Jenkins CI passes via its jenkins-build-toolchain Makefile target):
+  # GMP/MPFR/MPC/binutils/GCC are still compiled from source every time
+  # (buildgcc hardcodes --with-gmp/--with-mpfr/--with-mpc to its own
+  # from-source build tree, with no flag to point at system packages
+  # instead), but ccache caches the resulting object files in the
+  # container's persistent $HOME/.ccache (the udocker container itself is
+  # reused across `emblab build` runs, not recreated — see ADR-004), so a
+  # from-scratch rebuild is much faster on a warm cache. Also gives some
+  # resilience against CONTEXT.md's still-unexplained bug where the
+  # coreboot source tree gets stripped down after a crossgcc failure: the
+  # ccache dir lives outside that source tree, so it survives even a full
+  # re-clone.
+  setup: make crossgcc-aarch64 CPUS=${env.JOBS} BUILDGCC_OPTIONS=-y
   command: >-
     set -e;
     make KBUILD_DEFCONFIG=${vars.defconfig} defconfig;

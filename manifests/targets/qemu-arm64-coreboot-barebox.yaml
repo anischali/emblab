@@ -43,6 +43,11 @@ stack:
       - wget
       - curl
       - xz-utils
+      # Enables buildgcc's own -y/--ccache flag (see coreboot.yaml's setup
+      # comment) — caches compiled objects in the container's persistent
+      # $HOME/.ccache so a from-scratch crossgcc rebuild is much faster on
+      # a warm cache, without changing what actually gets built.
+      - ccache
       # crossgcc's buildgcc bootstraps the new GCC's Ada (GNAT) frontend
       # from a host GNAT — without one it just skips Ada support (a rebuild
       # from scratch every time it can't find one, plus no native graphics
