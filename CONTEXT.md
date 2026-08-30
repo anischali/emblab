@@ -505,6 +505,52 @@ Nothing in flight.
     project's own patch-application mechanism if that's viable for
     crossgcc's internal patches, or pin `coreboot`'s `ref` to a commit
     before this GCC 15.2.0 bump.
+    **2026-08-30 follow-up (not yet re-attempted for real)**: user reported
+    a real `make crossgcc-aarch64` run getting further than the above (the
+    `asan.c`/`asan.cc` patch applied clean this time — possibly upstream
+    drift again, unconfirmed) but restarting the whole
+    gmp/mpfr/mpc/binutils/gcc-15.2.0 download-and-build from scratch on
+    every retry, plus hitting `buildgcc`'s "No compatible Ada compiler
+    (GNAT) found" notice. Root-caused the rebuild-from-scratch part as an
+    emblab driver gap, not upstream: `coreboot.yaml`'s `make
+    crossgcc-aarch64` line lived in `build.command`, which has no
+    inter-step idempotency of its own — any retry re-ran it in full even
+    though `make crossgcc-aarch64` should itself be a no-op the second time.
+    Fixed by moving it into `build.setup` (ADR-011's tracked/forced-
+    independently-of-`command` mechanism, already proven for
+    `fit-image`'s key generation) — a retry after a `command`-only failure
+    now skips crossgcc entirely via its own marker; `emblab build
+    --setup-force` still forces a real rebuild when wanted. Also added
+    `gnat-12` to the target's `builddeps` (matches `gnu-aarch64`'s system
+    `gcc` 12.2.0 — `buildgcc` needs a host GNAT matching the *host* gcc it
+    bootstraps against, not the GCC 15.2.0 being built) so the Ada frontend
+    builds instead of being silently skipped. Along the way, caught and
+    fixed a real ordering bug this refactor would otherwise have hit:
+    `build.py`'s `ensure_builddeps()` only ran inside the `build.command`
+    branch, so a component's `build.setup` step (which now needs those same
+    builddeps — e.g. `gnat-12`) would have run in a container that hadn't
+    installed them yet. Fixed by hoisting the (already marker-based
+    idempotent) `ensure_builddeps()` call to run once before `build.setup`,
+    covering both steps; new regression test
+    `test_setup_step_runs_after_builddeps_installed_and_is_skipped_when_unchanged`
+    in `tests/test_build_plan.py` pins the ordering plus setup's own
+    independent marker (skipped when unchanged, rerun only via
+    `--setup-force`).
+    **Also confirmed against the real clone**: no way exists to make
+    `buildgcc` install GMP/MPFR/MPC/binutils/GCC instead of compiling them
+    — `util/crossgcc/buildgcc`'s GCC step hardcodes
+    `--with-gmp/--with-mpfr/--with-mpc` to its own from-source build tree
+    (`util/crossgcc/xgcc`), with no flag to point at system packages, and
+    there's no `myhelp()`-listed option for it either (checked the full
+    flag list). What buildgcc DOES support, confirmed in the same script:
+    `-y|--ccache` (`BUILDGCC_OPTIONS=-y`, the same flag coreboot's own
+    `jenkins-build-toolchain` Makefile target passes) — added `ccache` to
+    the target's `builddeps` and `BUILDGCC_OPTIONS=-y` to `coreboot.yaml`'s
+    `setup`. Still compiles from source every time, but caches objects in
+    the udocker container's persistent `$HOME/.ccache` (the container is
+    reused across runs, not recreated — ADR-004), which should also help
+    resilience against the mystery source-tree-wipe bug below since the
+    cache lives outside the source tree.
 
 ## Open questions
 - Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox`,

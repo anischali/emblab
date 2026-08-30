@@ -3,11 +3,12 @@
 resolve target -> topo-sort its stack -> for each component in order:
 ensure the *stack entry's* declared image is provisioned (a component has
 no image of its own — see ADR-009), ensure its source is fetched, resolve
-its vars (which may reference already-built sibling artifacts), run its
-optional build.setup step if present (tracked/forced independently of the
-build step — see ADR-011), skip the build step if unchanged, else install
-the stack entry's builddeps, render its build command and run it
-in-container, then collect its declared artifacts onto the host.
+its vars (which may reference already-built sibling artifacts), install the
+stack entry's builddeps (idempotent, so safe ahead of both steps below),
+run its optional build.setup step if present (tracked/forced independently
+of the build step — see ADR-011), then skip the build step if unchanged,
+else render its build command and run it in-container, then collect its
+declared artifacts onto the host.
 """
 
 import shutil
@@ -50,6 +51,14 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
         merged_vars = {**component.build.vars, **entry.vars}
         resolved_vars = templating.resolve_vars(merged_vars, env=env, artifacts=artifacts_by_component)
 
+        # Installed here, ahead of build.setup, not just ahead of
+        # build.command below: ensure_builddeps is itself marker-based
+        # idempotent (skips a no-op reinstall), and a component's setup step
+        # (ADR-011) can need the same builddeps its command does (e.g.
+        # coreboot's crossgcc build needs gnat-12/libgmp-dev/... whether it
+        # runs from setup or command) — calling it once here covers both.
+        containers.ensure_builddeps(image, component_name, entry.builddeps, workspace, log=log)
+
         if component.build.setup:
             setup_marker = state.setup_marker_path(workspace, target.name, component_name)
             setup_current_hash = state.setup_hash(component, resolved_vars)
@@ -77,8 +86,6 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
         if not force and have_artifacts and state.marker_matches(marker_path, current_hash):
             log(f"[{component_name}] unchanged, skipping build")
         else:
-            containers.ensure_builddeps(image, component_name, entry.builddeps, workspace, log=log)
-
             for filename in component.build.files:
                 file_src = manifests.component_file_path(component_name, filename)
                 shutil.copy2(file_src, src_dir / filename)

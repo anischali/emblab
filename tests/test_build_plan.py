@@ -505,6 +505,70 @@ def test_builddeps_installed_once_then_skipped_on_rebuild(tmp_path, monkeypatch)
     assert len(apt_calls_second) == len(apt_calls_first)
 
 
+def test_setup_step_runs_after_builddeps_installed_and_is_skipped_when_unchanged(tmp_path, monkeypatch):
+    """ADR-011's build.setup must see the stack entry's builddeps already
+    installed (e.g. coreboot.yaml's crossgcc setup needs gnat-12/libgmp-dev/
+    ... from the target's builddeps, not just build.command does) — a
+    regression test for the real ordering bug this would otherwise hide:
+    ensure_builddeps only ran inside the build.command branch, so a
+    setup-only rebuild (marker stale, artifacts already present) skipped
+    installing builddeps entirely. Also checks setup's own independent
+    marker: unchanged on a plain rebuild, forced only by setup_force."""
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+
+    manifests_dir = tmp_path / "manifests"
+    (manifests_dir / "images").mkdir(parents=True)
+    (manifests_dir / "components" / "withsetup").mkdir(parents=True)
+    (manifests_dir / "images" / "img.yaml").write_text("base_image: x\nprovision: []\n")
+    (manifests_dir / "components" / "withsetup" / "withsetup.yaml").write_text(
+        "build:\n  vars: {}\n  setup: echo setting-up\n  command: echo hi\n"
+        "artifacts:\n  out: out.txt\n"
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+
+    target = manifests.Target(
+        name="setup-target",
+        description="",
+        arch="fake",
+        stack=[
+            manifests.StackEntry(
+                component="withsetup", vars={}, image="img", builddeps=["foo-tool"], patches=[]
+            )
+        ],
+        qemu=manifests.Qemu(binary="true", args=[], image="img"),
+    )
+
+    component = manifests.load_component("withsetup")
+    _precreate_source_and_artifacts(tmp_path, component)
+
+    run_calls = []
+
+    def fake_ensure_source(workspace, component, patches, **kwargs):
+        return Path(workspace) / "src" / component.source.path
+
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+        run_calls.append(command[-1])
+
+    with patch("emblab.build.manifests.load_target", return_value=target), \
+         patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
+         patch("emblab.build.containers.ensure_image", return_value=None), \
+         patch("emblab.build.containers.run", side_effect=fake_run):
+        build_mod.build("setup-target", tmp_path)
+
+        apt_idx = next(i for i, c in enumerate(run_calls) if "apt-get install" in c)
+        setup_idx = next(i for i, c in enumerate(run_calls) if c == "echo setting-up")
+        assert apt_idx < setup_idx
+
+        run_calls.clear()
+        build_mod.build("setup-target", tmp_path, force=True)
+        assert not any(c == "echo setting-up" for c in run_calls), "unchanged setup must be skipped, not re-run"
+
+        run_calls.clear()
+        build_mod.build("setup-target", tmp_path, setup_force=True)
+        assert any(c == "echo setting-up" for c in run_calls), "setup_force must re-run setup"
+
+
+
 def test_stack_entry_patches_are_target_specific_extras_on_top_of_components_own(tmp_path, monkeypatch):
     """ADR-010: a target's stack-entry patches are extra, on top of whatever
     the component always applies via build.patches — not a replacement."""

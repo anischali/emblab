@@ -80,9 +80,16 @@ build:
     # non-empty — Kbuild's own oldconfig/olddefconfig machinery re-syncs
     # everything else, same as barebox.yaml's extra_conf comment describes.
     payload_conf: ""
+  # crossgcc is coreboot's own from-source GCC 15.2.0/binutils build (see
+  # description above for why the image's system gcc can't be used
+  # instead) — genuinely slow on first run. Modeled as build.setup (ADR-011)
+  # rather than folded into command: setup is tracked/skipped independently
+  # of command via its own marker, so a retry after a defconfig/build
+  # failure (or any other command-only change) does NOT re-trigger the
+  # whole crossgcc build — only `emblab build --setup-force` does.
+  setup: make crossgcc-aarch64 CPUS=${env.JOBS}
   command: >-
     set -e;
-    make crossgcc-aarch64 CPUS=${env.JOBS};
     make KBUILD_DEFCONFIG=${vars.defconfig} defconfig;
     if [ -n "${vars.payload_conf}" ]; then printf '%s\n' "${vars.payload_conf}" >> .config; fi;
     make -j${env.JOBS}

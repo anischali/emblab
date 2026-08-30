@@ -24,17 +24,24 @@ purpose shouldn't require faking out `command`'s own change-detection.
 - `state.py` tracks it as a **third, independent** marker layer
   (`setup_hash`/`setup_marker_path`, alongside the existing image and
   component-build markers): hashes `{setup, resolved_vars}` only — no
-  source ref, builddeps, or patches, since `build.setup` runs before
-  builddeps are installed and isn't expected to depend on the merged
-  patch set the way `command` does.
-- `build.py` runs `build.setup` (if present) once per component, before
-  the existing `component_hash`/skip-if-unchanged check for `command`:
-  resolve vars first (setup may reference `${vars.*}`/`${env.*}` the same
-  way `command` does), skip if `setup_marker` already matches (unless
-  `--setup-force`), else render and run it in-container exactly like
-  `command` (same image, same `workspace/src/<path>` workdir, same
-  `helpers/` bind-mount — so it can call `fitkeys-ctl` by name), then
-  write its own marker.
+  source ref or patches, since `build.setup` isn't expected to depend on
+  the merged patch set the way `command` does. (Originally `builddeps`
+  were excluded too on the assumption `setup` runs before they're
+  installed; a real coreboot/crossgcc setup step turned out to need the
+  same builddeps `command` does, e.g. `gnat-12` — `build.py` now installs
+  `entry.builddeps` once, ahead of `setup`, covering both; see
+  `state.setup_hash`'s docstring and `build.py`'s own module docstring for
+  the current ordering. `builddeps` still isn't part of `setup_hash`
+  itself — changing them alone doesn't need to force a `setup` rerun the
+  way it forces a `command` rebuild via `component_hash`.)
+- `build.py` runs `build.setup` (if present) once per component, after
+  installing the stack entry's `builddeps` but before the existing
+  `component_hash`/skip-if-unchanged check for `command`: resolve vars
+  first (setup may reference `${vars.*}`/`${env.*}` the same way `command`
+  does), skip if `setup_marker` already matches (unless `--setup-force`),
+  else render and run it in-container exactly like `command` (same image,
+  same `workspace/src/<path>` workdir, same `helpers/` bind-mount — so it
+  can call `fitkeys-ctl` by name), then write its own marker.
 - `emblab build` gains `--setup-force`, independent of the existing
   `--force`: `--force` alone reruns `command` but leaves an
   already-satisfied `setup` marker alone; `--setup-force` alone reruns

@@ -43,6 +43,15 @@ stack:
       - wget
       - curl
       - xz-utils
+      # crossgcc's buildgcc bootstraps the new GCC's Ada (GNAT) frontend
+      # from a host GNAT — without one it just skips Ada support (a rebuild
+      # from scratch every time it can't find one, plus no native graphics
+      # init for the Intel boards this project doesn't target anyway), and
+      # rebuilds/recompiles that check on every crossgcc run. gnat-12 is the
+      # bookworm package matching gnu-aarch64's system gcc-12.2.0 (`gcc`
+      # from build-essential) — buildgcc requires the host GNAT to match the
+      # host gcc it bootstraps against, not the GCC 15.2.0 being built.
+      - gnat-12
     vars:
       payload_conf: |
         CONFIG_PAYLOAD_ELF=y
