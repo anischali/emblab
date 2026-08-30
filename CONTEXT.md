@@ -366,6 +366,19 @@ forking the component or affecting targets that don't want it.
   `shutil.rmtree(..., onerror=...)` with a chmod-and-retry handler, or
   `udocker rm` on tracked containers before ever touching `workspace/udocker`
   with `shutil.rmtree` directly.
+- 2026-08-30: **`source.submodules` extended to accept a list of specific
+  submodule paths, not just `true`/`false`** (ADR-008 amendment) —
+  motivated by real breakage on `coreboot` (see Next's item 12): its
+  `.gitmodules` carries many large vendor-specific 3rdparty/ trees
+  unrelated to the one board this project builds, and a transient TLS
+  failure fetching one of them (AMD OpenSIL, entirely irrelevant to
+  qemu-aarch64) broke an otherwise-succeeding build. A list runs
+  `git submodule update --init --recursive --depth 1 -- <path>...`
+  (`sources.py`'s `_init_submodules`); `true` keeps its original
+  all-submodules meaning for `edk2`, which needs it. `manifests.py` gained
+  `_parse_submodules`, rejecting anything that isn't `true`/`false`/a
+  string list with a clear `ManifestError`. New offline tests in both
+  `test_sources.py` and `test_manifests.py`; 70/70 tests pass.
 
 ## In progress
 Nothing in flight.

@@ -39,3 +39,28 @@ one-time fact about a repo's layout, not something that changes build to
 build the way patches or vars do) that a `rm -rf workspace/src/<path>` by
 hand is an acceptable manual fix; revisit with a real marker (mirroring
 patches_hash) only if this turns out to matter in practice.
+
+### Amendment (2026-08-30): `source.submodules` as a path list
+
+coreboot surfaced a second, different need: unlike edk2 (where every
+submodule in `.gitmodules` is load-bearing for the one component being
+built), coreboot's `.gitmodules` carries many large, vendor-specific
+3rdparty/ trees (AMD OpenSIL variants, Intel STM, PPC signing utils,
+opensbi, vboot, ...) that a given mainboard typically needs none of — the
+qemu-aarch64 board needs exactly one, `3rdparty/arm-trusted-firmware`
+(`select ARM64_USE_ARM_TRUSTED_FIRMWARE` in its Kconfig). A blanket
+`--recursive` init of all of them is wasted bandwidth/time at best, and at
+worst a single flaky fetch of a submodule the build never even touches
+fails the whole build — confirmed for real: a transient TLS error cloning
+the unrelated AMD OpenSIL submodule broke an otherwise-succeeding
+qemu-arm64-coreboot-barebox build.
+
+`source.submodules` now accepts a list of specific submodule paths, not
+just `true`/`false`. A list runs
+`git submodule update --init --recursive --depth 1 -- <path>...` (path
+restriction only; recursion into each named submodule's own nested
+submodules is unaffected — arm-trusted-firmware's own libeventlog/libtl/
+libtpm/mbed-tls/mv-ddr still get pulled in). `true` keeps its original
+all-submodules meaning unchanged (edk2 still uses `true`); `false` is
+still the default. `manifests.py`'s `_parse_submodules` rejects anything
+else (e.g. a list with a non-string element) with a clear `ManifestError`.

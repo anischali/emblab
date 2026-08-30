@@ -36,7 +36,7 @@ class Source:
     git: str  # None for a sourceless (purely local packaging) component
     ref: str  # None for a sourceless component
     path: str  # always set — the workdir segment under workspace/src/
-    submodules: bool = False  # git submodule update --init --recursive after cloning
+    submodules: object = False  # False, True (all, recursive), or a list of specific submodule paths
 
 
 @dataclasses.dataclass
@@ -109,6 +109,20 @@ def _require(data, key, path):
     if key not in data:
         raise ManifestError(f"{_display(path)}: missing required field '{key}'")
     return data[key]
+
+
+def _parse_submodules(value, path):
+    # False/True: unchanged (no submodules / all of them, recursive). A list
+    # is a set of specific submodule paths to init instead of all of them —
+    # for a component whose repo carries submodules unrelated to what emblab
+    # actually builds (e.g. coreboot's many vendor-specific 3rdparty/ trees).
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return value
+    raise ManifestError(
+        f"{_display(path)}: 'source.submodules' must be true, false, or a list of submodule paths"
+    )
 
 
 def _check_no_bare_component_tokens(value, *, where):
@@ -193,7 +207,7 @@ def load_component(name):
             git=_require(source_data, "git", path),
             ref=_require(source_data, "ref", path),
             path=source_data.get("path", name),
-            submodules=bool(source_data.get("submodules", False)),
+            submodules=_parse_submodules(source_data.get("submodules", False), path),
         )
 
     build_data = _require(data, "build", path)

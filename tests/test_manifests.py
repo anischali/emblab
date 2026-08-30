@@ -420,6 +420,32 @@ def test_source_submodules_true_is_parsed(tmp_path, monkeypatch):
     assert component.source.submodules is True
 
 
+def test_source_submodules_list_is_parsed(tmp_path, monkeypatch):
+    manifests_dir = tmp_path / "manifests"
+    _write(
+        manifests_dir / "components" / "comp" / "comp.yaml",
+        "source:\n  git: x\n  ref: main\n  submodules:\n    - 3rdparty/arm-trusted-firmware\n"
+        "build:\n  vars: {}\n  command: echo hi\n"
+        "artifacts: {}\n",
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+    component = manifests.load_component("comp")
+    assert component.source.submodules == ["3rdparty/arm-trusted-firmware"]
+
+
+def test_source_submodules_rejects_non_string_list_items(tmp_path, monkeypatch):
+    manifests_dir = tmp_path / "manifests"
+    _write(
+        manifests_dir / "components" / "comp" / "comp.yaml",
+        "source:\n  git: x\n  ref: main\n  submodules:\n    - 3rdparty/foo\n    - 5\n"
+        "build:\n  vars: {}\n  command: echo hi\n"
+        "artifacts: {}\n",
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+    with pytest.raises(ManifestError, match="source.submodules"):
+        manifests.load_component("comp")
+
+
 def test_sourceless_component_with_patches_raises_clear_error(tmp_path, monkeypatch):
     manifests_dir = tmp_path / "manifests"
     _write(manifests_dir / "components" / "packager" / "files" / "0001-a.patch", "a\n")

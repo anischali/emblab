@@ -37,6 +37,24 @@ def test_ensure_source_initializes_submodules_when_declared(tmp_path):
     assert clone_index < submodule_index  # submodules only initialized after a real clone
 
 
+def test_ensure_source_initializes_only_named_submodules_when_list_declared(tmp_path):
+    component = _component(submodules=["3rdparty/arm-trusted-firmware"])
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return type("Result", (), {"returncode": 0, "stdout": ""})()
+
+    with patch("emblab.sources.subprocess.run", side_effect=fake_run):
+        sources.ensure_source(tmp_path, component, component.build.patches)
+
+    submodule_calls = [c for c in calls if c[:2] == ["git", "submodule"]]
+    assert submodule_calls == [
+        ["git", "submodule", "update", "--init", "--recursive", "--depth", "1",
+         "--", "3rdparty/arm-trusted-firmware"]
+    ]
+
+
 def test_ensure_source_skips_submodules_by_default(tmp_path):
     component = _component(submodules=False)
     calls = []
