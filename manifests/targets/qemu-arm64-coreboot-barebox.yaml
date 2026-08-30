@@ -63,5 +63,3 @@ qemu:
     - "virtio-rng-pci"
     - "-bios"
     - "${coreboot.rom}"
-    - "-kernel"
-    - "${barebox.images}/barebox-dt-2nd.img"
