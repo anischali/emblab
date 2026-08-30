@@ -25,7 +25,12 @@ adds the same target-optional layering for patches: a stack entry's own
 `patches:` are extras on top of a component's always-applied
 `build.patches` — used to opt `edk2` into real `FvBootDxe` firmware
 bundling (https://codeberg.org/anischali/FvBootDxe) per-target, without
-forking the component or affecting targets that don't want it.
+forking the component or affecting targets that don't want it. ADR-014
+adds a Yocto `devtool modify`/`reset`-style marker
+(`sources.mark_modified`/`mark_finished`, `emblab modify`/`emblab reset
+[--reclone]`) so a component's cloned source can be frozen against
+`ensure_source`'s ref-moved/patches-changed re-clone while someone is
+hand-editing it under `workspace/src/<path>`.
 
 ## Proven
 - 2026-08-29: `bash bootstrap.sh` — venv + `pip install -e ".[dev]"` +
@@ -506,6 +511,19 @@ forking the component or affecting targets that don't want it.
   really is bundled in). `emblab run` (actual QEMU boot) was launched for
   real afterward; full boot confirmation still pending, see Next.
   73/73 offline tests pass.
+- 2026-08-31: **ADR-014**: `emblab modify <component>` / `emblab reset
+  <component> [--reclone]`, motivated directly by the user hitting
+  `ensure_source`'s ref-moved re-clone discarding hand edits to a
+  component's source mid-debugging. `sources.mark_modified`/
+  `mark_finished` verified for real (not just mocked) against a local
+  throwaway git remote: clone, edit a tracked file by hand, `mark_modified`,
+  make a real new upstream commit, re-run `ensure_source` — the marked tree
+  is untouched (zero git calls) and the hand edit survives; `mark_finished`
+  with no `--reclone` leaves the edit in place and only re-clones on the
+  *next* `ensure_source` call, exactly when the ref-moved check would have
+  fired anyway. 79/79 offline tests pass (6 new, covering the marker
+  short-circuit, its priority over `force=True`, and `mark_finished`
+  resuming normal tracking).
 
 ## In progress
 Nothing in flight.

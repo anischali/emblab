@@ -4,9 +4,12 @@ network/filesystem git operations happen.
 """
 
 import subprocess
+
+import pytest
 from unittest.mock import patch
 
 from emblab import manifests, sources
+from emblab.errors import EmblabError
 
 
 def _component(*, submodules=False, patches=None):
@@ -156,3 +159,107 @@ def test_ensure_source_applies_caller_supplied_patches_in_order(tmp_path, monkey
         ["git", "apply", str(files_dir / "0001-base.patch")],
         ["git", "apply", str(files_dir / "0002-target-extra.patch")],
     ]
+
+
+def _existing_clone(workspace, component):
+    """Fake a pre-existing clone on disk (no real git involved) — enough to
+    satisfy ensure_source's `dest.exists() and (dest / ".git").exists()`
+    on-disk check for the manual-edit marker tests below."""
+    dest = sources.source_dir(workspace, component)
+    (dest / ".git").mkdir(parents=True)
+    return dest
+
+
+def test_mark_modified_requires_an_existing_clone(tmp_path):
+    component = _component()
+    with pytest.raises(EmblabError):
+        sources.mark_modified(tmp_path, component)
+
+
+def test_mark_modified_drops_marker_in_source_dir(tmp_path):
+    component = _component()
+    dest = _existing_clone(tmp_path, component)
+
+    sources.mark_modified(tmp_path, component)
+
+    assert (dest / sources.MANUAL_EDIT_MARKER_NAME).exists()
+
+
+def test_ensure_source_skips_all_git_calls_when_marked_for_manual_edit(tmp_path):
+    component = _component()
+    dest = _existing_clone(tmp_path, component)
+    sources.mark_modified(tmp_path, component)
+
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return type("Result", (), {"returncode": 0, "stdout": ""})()
+
+    with patch("emblab.sources.subprocess.run", side_effect=fake_run):
+        result = sources.ensure_source(tmp_path, component, component.build.patches)
+
+    assert result == dest
+    assert calls == []  # no ls-remote, no clone, no patch reapply
+
+
+def test_ensure_source_manual_marker_wins_even_with_force(tmp_path):
+    """A marked component must survive even `force=True` — only
+    `mark_finished` (removing the marker first) can hand it back to
+    driver-tracked fetching. See cmd_reset's --reclone."""
+    component = _component()
+    dest = _existing_clone(tmp_path, component)
+    sources.mark_modified(tmp_path, component)
+
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return type("Result", (), {"returncode": 0, "stdout": ""})()
+
+    with patch("emblab.sources.subprocess.run", side_effect=fake_run):
+        result = sources.ensure_source(tmp_path, component, component.build.patches, force=True)
+
+    assert result == dest
+    assert calls == []
+
+
+def test_mark_finished_removes_marker_and_resumes_normal_tracking(tmp_path):
+    from emblab import state
+
+    component = _component()
+    dest = _existing_clone(tmp_path, component)
+    # pre-seed the patches marker so this test isolates ref-check behavior,
+    # not the (already covered elsewhere) patches-changed re-clone path.
+    state.write_marker(dest / sources.PATCHES_MARKER_NAME, state.patches_hash(component.name, component.build.patches))
+    sources.mark_modified(tmp_path, component)
+
+    sources.mark_finished(tmp_path, component)
+
+    assert not (dest / sources.MANUAL_EDIT_MARKER_NAME).exists()
+
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if args[:2] == ["git", "rev-parse"]:
+            return type("Result", (), {"returncode": 0, "stdout": "deadbeef\n"})()
+        if args[:2] == ["git", "ls-remote"]:
+            return type("Result", (), {"returncode": 0, "stdout": "deadbeef\trefs/heads/main\n"})()
+        return type("Result", (), {"returncode": 0, "stdout": ""})()
+
+    with patch("emblab.sources.subprocess.run", side_effect=fake_run):
+        result = sources.ensure_source(tmp_path, component, component.build.patches)
+
+    assert result == dest
+    # ref unchanged, patches unchanged -> no re-clone, but the freshness
+    # check itself ran again (unlike the marked case above).
+    assert ["git", "ls-remote", component.source.git, component.source.ref] in calls
+    assert not any(c[1] == "clone" for c in calls)
+
+
+def test_mark_finished_is_a_noop_when_nothing_was_marked(tmp_path):
+    component = _component()
+    _existing_clone(tmp_path, component)
+
+    sources.mark_finished(tmp_path, component)  # must not raise

@@ -42,6 +42,18 @@ def cmd_fetch(args):
     sources.ensure_source(WORKSPACE, component, component.build.patches)
 
 
+def cmd_modify(args):
+    component = manifests.load_component(args.component)
+    sources.mark_modified(WORKSPACE, component)
+
+
+def cmd_reset(args):
+    component = manifests.load_component(args.component)
+    sources.mark_finished(WORKSPACE, component)
+    if args.reclone:
+        sources.ensure_source(WORKSPACE, component, component.build.patches, force=True)
+
+
 def cmd_build(args):
     build_mod.build(
         args.target, WORKSPACE, force=args.force, setup_force=args.setup_force, only=args.only
@@ -131,6 +143,22 @@ def build_parser():
     p_fetch = sub.add_parser("fetch", help="clone/update one component's source")
     p_fetch.add_argument("component")
     p_fetch.set_defaults(func=cmd_fetch)
+
+    p_modify = sub.add_parser(
+        "modify", help="mark a component's source as under manual edit (emblab won't touch it)"
+    )
+    p_modify.add_argument("component")
+    p_modify.set_defaults(func=cmd_modify)
+
+    p_reset = sub.add_parser(
+        "reset", help="finish manual edits on a component's source, resuming normal fetch tracking"
+    )
+    p_reset.add_argument("component")
+    p_reset.add_argument(
+        "--reclone", action="store_true",
+        help="also discard the local tree now and re-clone + reapply patches immediately",
+    )
+    p_reset.set_defaults(func=cmd_reset)
 
     p_build = sub.add_parser("build", help="build a target's full stack")
     p_build.add_argument("target")

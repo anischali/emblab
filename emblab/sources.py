@@ -15,6 +15,18 @@ not arbitrary commits. Pinning exact SHAs is a Phase 2 follow-up (see
 CONTEXT.md); switching to a SHA later will need `git fetch <url> <sha> &&
 git checkout FETCH_HEAD` instead of `--branch`, since most servers don't
 advertise arbitrary commits for shallow-clone-by-branch.
+
+A component with a floating `ref` (e.g. "master") moving upstream is by
+design, not a bug (see the module-level `ensure_source` note above it) —
+but it means a real re-clone can land in the middle of someone hand-editing
+that source tree, silently discarding the edit. ADR-014 adds a Yocto
+`devtool modify`/`reset`-style escape hatch for that: `mark_modified()`
+drops a marker file in the source dir that makes `ensure_source` skip its
+own freshness checks entirely (no `ls-remote`, no re-clone, no patch
+reapply) for as long as it's present; `mark_finished()` removes it, handing
+the tree back to normal ref/patches tracking on the *next* `ensure_source`
+call — it does not itself re-clone. `emblab modify <component>` /
+`emblab reset <component> [--reclone]` are the CLI entry points.
 """
 
 import shutil
@@ -22,8 +34,10 @@ import subprocess
 from pathlib import Path
 
 from . import manifests, state
+from .errors import EmblabError
 
 PATCHES_MARKER_NAME = ".emblab-patches-hash"
+MANUAL_EDIT_MARKER_NAME = ".emblab-manual-edit"
 
 
 def source_dir(workspace, component):
@@ -115,12 +129,23 @@ def _apply_patches(dest, component, patches, *, log=print):
         subprocess.run(["git", "apply", str(patch_path)], cwd=dest, check=True)
 
 
-def ensure_source(workspace, component, patches, *, log=print):
+def ensure_source(workspace, component, patches, *, log=print, force=False):
     """Clone `component`'s source if missing, re-fetch if the pinned ref has
     moved upstream, or re-fetch if `patches` changed — a patch is only ever
     applied once, right after a fresh clone, onto a known-pristine tree
     (never reapplied onto an already-patched, possibly-mid-build checkout).
     Returns the local source directory path.
+
+    If the source dir carries a manual-edit marker (see `mark_modified`),
+    all of the above is skipped unconditionally — no `ls-remote`, no
+    re-clone, no patch reapply — and the tree is returned exactly as it
+    sits on disk. This is checked before `force`, so `force=True` cannot
+    steamroll a component someone is mid-edit on; `cmd_reset`'s `--reclone`
+    only works because it removes the marker itself before calling in here.
+
+    `force=True` re-clones unconditionally even if neither the ref nor
+    `patches` changed — used by `emblab reset --reclone` to restore a
+    component to a pristine, driver-tracked checkout on demand.
 
     `patches` is the full, ordered list to apply — the caller's
     responsibility to assemble (see module docstring); this function does
@@ -138,16 +163,26 @@ def ensure_source(workspace, component, patches, *, log=print):
 
     current_patches_hash = state.patches_hash(component.name, patches)
     patches_marker = dest / PATCHES_MARKER_NAME
+    manual_marker = dest / MANUAL_EDIT_MARKER_NAME
 
     if dest.exists() and (dest / ".git").exists():
+        if manual_marker.exists():
+            log(
+                f"[{component.name}] source under manual edit at {dest}, "
+                f"skipping fetch (run 'emblab reset {component.name}' when done)"
+            )
+            return dest
+
         head = _current_head(dest)
         remote_sha = _resolve_remote_ref(component.source.git, component.source.ref)
         ref_moved = remote_sha is not None and head != remote_sha
         patches_changed = not state.marker_matches(patches_marker, current_patches_hash)
-        if not ref_moved and not patches_changed:
+        if not force and not ref_moved and not patches_changed:
             log(f"[{component.name}] source up to date at {dest}")
             return dest
-        if ref_moved:
+        if force:
+            log(f"[{component.name}] re-clone forced")
+        elif ref_moved:
             log(f"[{component.name}] ref '{component.source.ref}' moved upstream, re-cloning")
         else:
             log(f"[{component.name}] patches changed, re-cloning to reapply cleanly")
@@ -169,3 +204,42 @@ def ensure_source(workspace, component, patches, *, log=print):
     state.write_marker(patches_marker, current_patches_hash)
 
     return dest
+
+
+def mark_modified(workspace, component, *, log=print):
+    """Freeze `component`'s source tree against `ensure_source` — Yocto
+    `devtool modify`-style. The tree must already be cloned (there's
+    nothing to mark otherwise); drops MANUAL_EDIT_MARKER_NAME into it, which
+    `ensure_source` checks first and unconditionally short-circuits on, so
+    hand edits under `workspace/src/<path>` survive builds, upstream ref
+    moves, and even `emblab reset --reclone` on some *other* component,
+    until `mark_finished` is called for this one."""
+    dest = source_dir(workspace, component)
+    if not (dest.exists() and (dest / ".git").exists()):
+        raise EmblabError(
+            f"'{component.name}' has no cloned source at {dest} yet — "
+            f"run 'emblab fetch {component.name}' first"
+        )
+    (dest / MANUAL_EDIT_MARKER_NAME).touch()
+    log(
+        f"[{component.name}] marked under manual edit at {dest} — "
+        f"emblab will not fetch or patch this source until 'emblab reset {component.name}'"
+    )
+
+
+def mark_finished(workspace, component, *, log=print):
+    """Yocto `devtool reset`-style: remove `mark_modified`'s marker, handing
+    `component`'s source back to normal ref/patches tracking. Doesn't itself
+    re-clone — the tree is left exactly as the manual edit left it, and the
+    next `ensure_source` call (e.g. the component's next build) re-clones
+    only if the pinned ref moved or patches changed while it was marked,
+    same as any other component. Pass `force=True` to the caller's own
+    follow-up `ensure_source` call (see `cmd_reset --reclone`) to restore a
+    pristine checkout immediately instead of waiting for that."""
+    dest = source_dir(workspace, component)
+    marker = dest / MANUAL_EDIT_MARKER_NAME
+    if marker.exists():
+        marker.unlink()
+        log(f"[{component.name}] manual edit finished at {dest} — normal fetch tracking resumes")
+    else:
+        log(f"[{component.name}] source at {dest} was not marked for manual edit, nothing to do")
