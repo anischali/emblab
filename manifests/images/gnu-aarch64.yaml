@@ -6,12 +6,16 @@ description: >
 base_image: docker.io/library/debian:bookworm-slim
 provision:
   - apt-get update
+  # libncurses-dev: confirmed real, `make menuconfig` (barebox/coreboot both
+  # use Kconfig) fails without it — scripts/kconfig/mconf-libs needs
+  # ncurses' headers to build its interactive terminal UI.
   - >-
     apt-get install -y --no-install-recommends
     build-essential git python3 python3-pip python3-pyelftools python3-pycryptodome
     device-tree-compiler bison flex libssl-dev pkg-config bc rsync unzip
     gcc-aarch64-linux-gnu g++-aarch64-linux-gnu gcc-arm-linux-gnueabi
     meson ninja-build libglib2.0-dev lz4 python3-cryptography bash-completion
+    libncurses-dev
 env:
   CROSS_COMPILE: aarch64-linux-gnu-
   CROSS_COMPILE32: arm-linux-gnu-

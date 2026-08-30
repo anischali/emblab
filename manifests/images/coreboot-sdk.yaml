@@ -34,4 +34,7 @@ provision:
     s/^Suites: stable-security$/Suites: bookworm-security/'
     /etc/apt/sources.list.d/debian.sources
   - apt-get update
+  # libncurses-dev: confirmed real, `make menuconfig` (coreboot uses
+  # Kconfig too) fails without it the same way gnu-aarch64.yaml's does.
+  - apt-get install -y --no-install-recommends libncurses-dev
 env: {}
