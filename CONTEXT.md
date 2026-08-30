@@ -634,6 +634,36 @@ Nothing in flight.
     same as anything else in that tree, forcing `sources.py`'s own
     patches-hash re-apply logic to redo it on the next build (expected
     behavior, not new risk).
+    **2026-08-31: real attempt surfaced a genuine `sources.py` gap, not an
+    upstream one this time.** A real `make crossgcc-aarch64` run still
+    tried to download `mpc-1.4.1.tar.xz` even though the GMP/MPFR/MPC
+    patch above was supposedly already applied — root cause: the patch
+    *had* been applied for real (`.emblab-patches-hash` in the real clone
+    exactly matched the hash for `["0001-crossgcc-...patch"]`, and
+    `_apply_patches()`'s `git apply ... check=True` can't leave a marker
+    written without a real successful apply), but something outside
+    emblab (most likely a manual `git checkout`/reset on that one file
+    while poking at the build by hand) reverted `util/crossgcc/buildgcc`
+    back to unpatched afterward — confirmed by re-reading the real file
+    and finding `PACKAGES="GMP MPFR MPC BINUTILS GCC"` again. `sources.py`
+    has no way to catch this: `ensure_source()`'s idempotency check only
+    ever compares its own stored marker against the *declared* patch list
+    (`state.patches_hash`), never re-verifies the working tree still
+    reflects it — a real gap, not just a theoretical one now. Worked
+    around by hand (re-`git apply`ing the same patch directly onto the
+    live clone; not fixed in the driver). Also added `-m`
+    (`--mirror`, confirmed real in the script, coreboot's own
+    `Makefile.mk` documents it too) to `BUILDGCC_OPTIONS` alongside `-y`
+    — fetches each package from coreboot.org's own `crossgcc-sources`
+    mirror instead of its individual upstream URL, same filename either
+    way. **Still UNVERIFIED**: whether that mirror actually carries this
+    script's exact pinned `binutils-2.46.1`/`gcc-15.2.0` — the next real
+    attempt is the first real test of `-m` actually helping vs. 404ing.
+    If `workspace/src/<component>` hand-edits recur, worth a
+    `sources.py` follow-up: either re-verify a patch's effect (e.g. hash
+    the post-patch file, not just the patch inputs) or just document more
+    prominently that `workspace/` is emblab's own working tree and
+    shouldn't be hand-edited outside of it.
 13. **ADR-013's `emblab shell` devshell** — every individual mechanism
     (`--hostauth`/`--user=` non-root, `bash --rcfile ... -i`, the
     bash-completion dynamic loader) is confirmed against a real container
