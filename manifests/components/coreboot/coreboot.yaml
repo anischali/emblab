@@ -125,10 +125,23 @@ build:
   # mainboard needs (3rdparty/arm-trusted-firmware, 3rdparty/vboot — see
   # source.submodules above) via source.submodules, so this project never
   # needed coreboot's own auto-update to run at all.
+  #
+  # HOSTCC/HOSTCXX=clang/clang++ — a real, separate -std=gnu23 failure,
+  # confirmed against a real build: coreboot's host tools (cbfstool,
+  # util/sconfig, ...) build with $(HOSTCC), which defaults to the
+  # container's system `gcc` (coreboot-sdk is Debian bookworm-based same as
+  # gnu-aarch64 — confirmed for real: `gcc --version` -> Debian 12.2.0-14,
+  # no gcc-13/14/15 present at all), not /opt/xgcc's aarch64-elf-gcc — so
+  # XGCCPATH alone doesn't fix -std=gnu23 for HOSTCC the way it does for the
+  # target compiler. coreboot-sdk does bundle its own clang at
+  # /opt/xgcc/bin/clang-18 (coreboot officially supports building with
+  # clang — same image, confirmed `-std=gnu23` compiles clean with it same
+  # as the aarch64-elf-gcc check above), so point HOSTCC/HOSTCXX there
+  # instead of trying to find/build a newer host gcc.
   command: >-
     set -e;
-    make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ KBUILD_DEFCONFIG=${vars.defconfig} defconfig;
+    make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ HOSTCC=/opt/xgcc/bin/clang HOSTCXX=/opt/xgcc/bin/clang++ KBUILD_DEFCONFIG=${vars.defconfig} defconfig;
     if [ -n "${vars.payload_conf}" ]; then printf '%s\n' "${vars.payload_conf}" >> .config; fi;
-    make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ -j${env.JOBS}
+    make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ HOSTCC=/opt/xgcc/bin/clang HOSTCXX=/opt/xgcc/bin/clang++ -j${env.JOBS}
 artifacts:
   rom: build/coreboot.rom
