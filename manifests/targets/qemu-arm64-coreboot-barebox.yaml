@@ -24,7 +24,7 @@ stack:
   - component: barebox
     image: gnu-aarch64
     vars:
-      defconfig: multi_v8_defconfig
+      defconfig: efi_v8_defconfig
       arch: arm64
   - component: coreboot
     # coreboot-sdk ships a prebuilt cross-toolchain (GCC 14.2.0, confirmed
@@ -35,8 +35,17 @@ stack:
     # complete build with none declared.
     image: coreboot-sdk
     vars:
+      # CONFIG_PAYLOAD_FILE points at ${barebox.elf} (the real linked ELF),
+      # not ${barebox.images}/barebox-dt-2nd.img — confirmed for real: the
+      # latter is a raw flat binary (its own first bytes are literal
+      # AArch64 machine code, not an ELF header), so coreboot's
+      # CONFIG_PAYLOAD_ELF=y payload loader misparsed it as ELF and
+      # produced a bogus segment ("SELF segment doesn't target RAM:
+      # 0x00090000" -> "Payload not loaded", confirmed against a real
+      # `emblab run`). ${barebox.elf} is a genuine ELF64 PIE (`readelf -h`
+      # -> Type: DYN), which is what CONFIG_PAYLOAD_ELF actually expects.
       payload_conf: |
-        CONFIG_PAYLOAD_ELF=y
+        CONFIG_PAYLOAD_EDK2=y
         CONFIG_PAYLOAD_FILE="${barebox.images}/barebox-dt-2nd.img"
 qemu:
   binary: qemu-system-aarch64
@@ -45,7 +54,7 @@ qemu:
     - "-cpu"
     - "cortex-a57"
     - "-M"
-    - "virt,acpi=off"
+    - "virt,acpi=off,secure=on,virtualization=on"
     - "-m"
     - "1G"
     - "-serial"
@@ -54,3 +63,5 @@ qemu:
     - "virtio-rng-pci"
     - "-bios"
     - "${coreboot.rom}"
+    - "-kernel"
+    - "${barebox.images}/barebox-dt-2nd.img"
