@@ -46,13 +46,17 @@ def _resolve_remote_ref(url, ref):
 
 
 def _init_submodules(dest, component, *, log=print):
-    if not component.source.submodules:
+    submodules = component.source.submodules
+    if not submodules:
         return
-    log(f"[{component.name}] initializing git submodules")
-    subprocess.run(
-        ["git", "submodule", "update", "--init", "--recursive", "--depth", "1"],
-        cwd=dest, check=True,
-    )
+    base = ["git", "submodule", "update", "--init", "--recursive", "--depth", "1"]
+    if submodules is True:
+        log(f"[{component.name}] initializing git submodules")
+        subprocess.run(base, cwd=dest, check=True)
+    else:
+        paths = list(submodules)
+        log(f"[{component.name}] initializing git submodules ({', '.join(paths)})")
+        subprocess.run([*base, "--", *paths], cwd=dest, check=True)
 
 
 def _apply_patches(dest, component, patches, *, log=print):
