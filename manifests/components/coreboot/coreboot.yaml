@@ -107,20 +107,31 @@ build:
   # of command via its own marker, so a retry after a defconfig/build
   # failure (or any other command-only change) does NOT re-trigger the
   # whole crossgcc build — only `emblab build --setup-force` does.
-  # BUILDGCC_OPTIONS=-y turns on buildgcc's own `--ccache` flag (confirmed
-  # against the real util/crossgcc/buildgcc script — same flag coreboot's
-  # own Jenkins CI passes via its jenkins-build-toolchain Makefile target).
-  # binutils/GCC 15.2.0 are still compiled from source every time (see the
-  # 0001-crossgcc-use-system-gmp-mpfr-mpc.patch note above for why
-  # GMP/MPFR/MPC no longer are), but ccache caches the resulting object
-  # files in the container's persistent $HOME/.ccache (the udocker
-  # container itself is reused across `emblab build` runs, not recreated —
-  # see ADR-004), so a from-scratch rebuild is much faster on a warm cache.
-  # Also gives some resilience against CONTEXT.md's still-unexplained bug
-  # where the coreboot source tree gets stripped down after a crossgcc
-  # failure: the ccache dir lives outside that source tree, so it survives
-  # even a full re-clone.
-  setup: make crossgcc-aarch64 CPUS=${env.JOBS} BUILDGCC_OPTIONS=-y
+  # BUILDGCC_OPTIONS="-y -m" turns on two independent buildgcc flags
+  # (confirmed against the real util/crossgcc/buildgcc script — both also
+  # used by coreboot's own Jenkins CI, -y via jenkins-build-toolchain,
+  # -m per Makefile.mk's own "BUILDGCC_OPTIONS=-m to get packages from
+  # coreboot mirror" hint):
+  # -y is --ccache. binutils/GCC 15.2.0 are still compiled from source
+  # every time (see the 0001-crossgcc-use-system-gmp-mpfr-mpc.patch note
+  # above for why GMP/MPFR/MPC no longer are), but ccache caches the
+  # resulting object files in the container's persistent $HOME/.ccache
+  # (the udocker container itself is reused across `emblab build` runs,
+  # not recreated — see ADR-004), so a from-scratch rebuild is much faster
+  # on a warm cache. Also gives some resilience against CONTEXT.md's
+  # still-unexplained bug where the coreboot source tree gets stripped
+  # down after a crossgcc failure: the ccache dir lives outside that
+  # source tree, so it survives even a full re-clone.
+  # -m is --mirror: downloads each package (now just binutils/gcc — see
+  # the patch note) from coreboot.org's own crossgcc-sources mirror
+  # instead of its individual upstream URL (confirmed in buildgcc's
+  # download(): same archive filename either way, just a different base
+  # URL) — the same tarballs, from one host instead of several, likely
+  # faster/more reliable than ftpmirror.gnu.org's per-package mirrors.
+  # UNVERIFIED end to end: whether the mirror actually carries this
+  # script's exact pinned binutils-2.46.1/gcc-15.2.0 hasn't been confirmed
+  # for real yet — if it 404s, fall back by dropping -m (still keep -y).
+  setup: make crossgcc-aarch64 CPUS=${env.JOBS} BUILDGCC_OPTIONS="-y -m"
   command: >-
     set -e;
     make KBUILD_DEFCONFIG=${vars.defconfig} defconfig;
