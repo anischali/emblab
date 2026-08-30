@@ -27,36 +27,13 @@ stack:
       defconfig: multi_v8_defconfig
       arch: arm64
   - component: coreboot
-    image: gnu-aarch64
-    # Packages for coreboot's own crossgcc build (util/crossgcc's buildgcc
-    # script compiles GCC 15.2.0/binutils from source — see coreboot.yaml's
-    # description for why the image's own gcc/aarch64-linux-gnu-gcc 12.2.0
-    # can't be used instead) — not in gnu-aarch64's shared package set
-    # since no other component sharing that image builds its own
-    # toolchain from scratch.
-    builddeps:
-      - texinfo
-      - libgmp-dev
-      - libmpfr-dev
-      - libmpc-dev
-      - zlib1g-dev
-      - wget
-      - curl
-      - xz-utils
-      # Enables buildgcc's own -y/--ccache flag (see coreboot.yaml's setup
-      # comment) — caches compiled objects in the container's persistent
-      # $HOME/.ccache so a from-scratch crossgcc rebuild is much faster on
-      # a warm cache, without changing what actually gets built.
-      - ccache
-      # crossgcc's buildgcc bootstraps the new GCC's Ada (GNAT) frontend
-      # from a host GNAT — without one it just skips Ada support (a rebuild
-      # from scratch every time it can't find one, plus no native graphics
-      # init for the Intel boards this project doesn't target anyway), and
-      # rebuilds/recompiles that check on every crossgcc run. gnat-12 is the
-      # bookworm package matching gnu-aarch64's system gcc-12.2.0 (`gcc`
-      # from build-essential) — buildgcc requires the host GNAT to match the
-      # host gcc it bootstraps against, not the GCC 15.2.0 being built.
-      - gnat-12
+    # coreboot-sdk ships a prebuilt cross-toolchain (GCC 14.2.0, confirmed
+    # real — see coreboot.yaml's Toolchain paragraph) instead of gnu-aarch64's
+    # stock GCC 12.2.0, which can't build coreboot's -std=gnu23 main at all.
+    # No builddeps needed here any more: no from-source crossgcc build means
+    # no texinfo/libgmp-dev/.../gnat-12/ccache — confirmed by a real,
+    # complete build with none declared.
+    image: coreboot-sdk
     vars:
       payload_conf: |
         CONFIG_PAYLOAD_ELF=y

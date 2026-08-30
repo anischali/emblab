@@ -1,0 +1,37 @@
+name: coreboot-sdk
+description: >
+  coreboot's own official prebuilt cross-toolchain image
+  (docker.io/coreboot/coreboot-sdk), used instead of building crossgcc
+  from source (see coreboot.yaml). Confirmed for real against the actual
+  pulled image: `/opt/xgcc/bin/aarch64-elf-gcc` is GCC 14.2.0 with a full
+  binutils set (as/ld/objcopy/objdump/...) plus iasl/nasm, its
+  `--version` banner reads "coreboot toolchain v..." (it was built via
+  this same project's buildgcc, just distributed prebuilt) so coreboot's
+  own toolchain.mk accepts it with no CONFIG_ANY_TOOLCHAIN workaround
+  needed, and `-std=gnu23` compiles cleanly — satisfies the GCC 14+
+  requirement `main` needs that this project's own `gnu-aarch64` image
+  (Debian bookworm's stock GCC 12.2.0) does not. Debian bookworm base, so
+  python3/dtc/bison/flex/git/make/gcc/pkg-config are already present.
+  python3-pyelftools/python3-pycryptodome (which gnu-aarch64.yaml
+  provisions, for other components) are absent here too, but confirmed
+  NOT needed by a real, complete `qemu-arm64-coreboot-barebox` build —
+  an earlier guess-by-analogy to provision them anyway was dropped.
+base_image: docker.io/coreboot/coreboot-sdk:latest
+provision:
+  # /etc/apt/sources.list.d/debian.sources ships with `Suites: stable
+  # stable-updates` (confirmed against the real image) — a floating alias,
+  # not pinned to bookworm. Debian's own "stable" has since moved to
+  # trixie, which apt refuses to fetch from without an explicit opt-in
+  # (confirmed for real: `apt-get update` fails with "changed its
+  # 'Codename' value from 'bookworm' to 'trixie'"). Rather than just
+  # accept that change (which would install trixie packages into this
+  # image's actual bookworm rootfs — a real libc/ABI mismatch risk, not
+  # just a warning to silence), pin the suite names to bookworm explicitly
+  # so apt keeps fetching what this rootfs actually is.
+  - >-
+    sed -i
+    's/^Suites: stable stable-updates$/Suites: bookworm bookworm-updates/;
+    s/^Suites: stable-security$/Suites: bookworm-security/'
+    /etc/apt/sources.list.d/debian.sources
+  - apt-get update
+env: {}

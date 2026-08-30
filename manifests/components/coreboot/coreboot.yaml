@@ -15,46 +15,38 @@ description: >
   no chain-loaded option to fall back to). vars.payload_conf (below) is
   how a target supplies that payload.
 
-  Toolchain: builds coreboot's own crossgcc (`make crossgcc-aarch64` —
-  confirmed against a real clone's util/crossgcc/Makefile.mk, whose
-  TOOLCHAIN_ARCHES uses "aarch64", not "arm64"). Pointing coreboot at the
-  image's external aarch64-linux-gnu- toolchain instead was tried for
-  real and confirmed NOT viable, not just unconfirmed: with
-  CONFIG_ANY_TOOLCHAIN=y (relaxing toolchain.mk's "coreboot toolchain"
-  `-v`-banner check to "any toolchain present"), the real build got as
-  far as compiling host tools before failing —
-  `gcc: error: unrecognized command-line option '-std=gnu23'`.
-  coreboot's `main` (Makefile.mk: `CFLAGS_common += -std=gnu23`) requires
-  a GCC with finalized C23 support, i.e. GCC 14+; Debian bookworm (this
-  project's base image) ships GCC 12.2.0 for both host `gcc` and
-  `aarch64-linux-gnu-gcc`, and bookworm-backports carries no newer `gcc`
-  package at all (checked: `apt-cache policy gcc-13 gcc-14` after adding
-  bookworm-backports returns nothing). crossgcc's own
-  `util/crossgcc/buildgcc` pins `GCC_VERSION=15.2.0` — well past that
-  requirement — confirming crossgcc isn't just "the documented, certain
-  path" but the only one that actually works against `main` right now, at
-  the cost of a slow from-source GCC/binutils build on first run. (Its
-  `crossgcc-ARCH` target also builds iasl as a side effect
-  (`build_iasl`), so no separate `iasl` package is needed the way the
-  CONFIG_ANY_TOOLCHAIN path required.)
-
-  `files/0001-crossgcc-use-system-gmp-mpfr-mpc.patch` (against
-  `util/crossgcc/buildgcc`, confirmed with `git apply --check` against the
-  real clone, but not yet against a real build) skips downloading and
-  building GMP/MPFR/MPC from source, which `buildgcc` otherwise always does
-  unconditionally — there's no flag for it, `--with-gmp`/`--with-mpfr`/
-  `--with-mpc` are hardcoded to its own from-source build tree. The patch
-  drops `GMP MPC MPFR` from the `-P GCC` package list (only `BINUTILS GCC`
-  remain) and removes those same three `--with-*` flags from
-  `bootstrap_GCC()`/`configure_GCC()`, so GCC's own `configure` falls back
-  to auto-detecting the host's `libgmp-dev`/`libmpfr-dev`/`libmpc-dev`
-  (already in this target's `builddeps` — see the target manifest) instead;
-  their Debian bookworm versions (GMP 6.2.1, MPFR 4.2.0, MPC 1.3.1) are all
-  well above what GCC 15.2.0's configure requires. binutils never used
-  GMP/MPFR/MPC in the first place (`build_BINUTILS` never references
-  them), so it's unaffected. This only removes 3 of many packages `buildgcc`
-  builds — the actual cross GCC 15.2.0/binutils are still compiled from
-  source, same as CONFIG_ANY_TOOLCHAIN being ruled out above.
+  Toolchain: uses coreboot's own official prebuilt cross-toolchain image
+  (`manifests/images/coreboot-sdk.yaml`, `docker.io/coreboot/coreboot-sdk`
+  — see the target manifest's `image:`), not this project's own
+  `gnu-aarch64` image, and not a from-source `util/crossgcc` build.
+  Pointing coreboot at `gnu-aarch64`'s own `aarch64-linux-gnu-` toolchain
+  was tried for real and confirmed NOT viable: with `CONFIG_ANY_TOOLCHAIN=y`
+  (relaxing `toolchain.mk`'s "coreboot toolchain" `-v`-banner check to "any
+  toolchain present"), the real build got as far as compiling host tools
+  before failing — `gcc: error: unrecognized command-line option
+  '-std=gnu23'`. coreboot's `main` (Makefile.mk: `CFLAGS_common +=
+  -std=gnu23`) requires a GCC with finalized C23 support, i.e. GCC 14+;
+  Debian bookworm (`gnu-aarch64`'s base image) ships GCC 12.2.0, and
+  bookworm-backports carries no newer `gcc` package at all.
+  Building coreboot's own crossgcc from source (`make crossgcc-aarch64`,
+  `util/crossgcc/buildgcc`'s pinned GCC 15.2.0) was tried next and DID
+  satisfy that requirement, but was slow on every fresh clone (a real
+  from-source GCC/binutils build) and needed its own patch (skip
+  GMP/MPFR/MPC, use the system copies instead), `ccache` flag, and
+  `gnat-12` builddep to be practical — all now unnecessary, replaced by
+  pointing `XGCCPATH` (coreboot's own override mechanism, confirmed real
+  in `util/xcompile/xcompile`: `XGCCPATH=$1`, passed straight through from
+  `make XGCCPATH=...`, no crossgcc build needed at all) at `coreboot-sdk`'s
+  `/opt/xgcc/bin`. Confirmed for real against the actual pulled image:
+  `/opt/xgcc/bin/aarch64-elf-gcc --version` reads "(coreboot toolchain
+  v2024-12-21_306660c2de) 14.2.0" — built via this same `buildgcc`, just
+  distributed prebuilt, so `toolchain.mk`'s own `-v`-banner check accepts
+  it with no `CONFIG_ANY_TOOLCHAIN` workaround needed, and `-std=gnu23`
+  compiles cleanly (`aarch64-elf-gcc -std=gnu23 -E -x c /dev/null -o
+  /dev/null` — confirmed against the real image). The image also ships a
+  full binutils set (as/ld/objcopy/objdump/...) plus iasl/nasm at the same
+  path, matching what `crossgcc-aarch64`'s from-source build used to
+  provide.
 
   vars.defconfig originally guessed "configs/config.emulation_qemu-aarch64"
   (a plausible-looking name that doesn't actually exist upstream — real
@@ -98,42 +90,16 @@ build:
     # non-empty — Kbuild's own oldconfig/olddefconfig machinery re-syncs
     # everything else, same as barebox.yaml's extra_conf comment describes.
     payload_conf: ""
-  patches:
-    - 0001-crossgcc-use-system-gmp-mpfr-mpc.patch
-  # crossgcc is coreboot's own from-source GCC 15.2.0/binutils build (see
-  # description above for why the image's system gcc can't be used
-  # instead) — genuinely slow on first run. Modeled as build.setup (ADR-011)
-  # rather than folded into command: setup is tracked/skipped independently
-  # of command via its own marker, so a retry after a defconfig/build
-  # failure (or any other command-only change) does NOT re-trigger the
-  # whole crossgcc build — only `emblab build --setup-force` does.
-  # BUILDGCC_OPTIONS=-y turns on buildgcc's own `--ccache` flag (confirmed
-  # against the real util/crossgcc/buildgcc script — same flag coreboot's
-  # own Jenkins CI passes via its jenkins-build-toolchain Makefile target).
-  # binutils/GCC 15.2.0 are still compiled from source every time (see the
-  # 0001-crossgcc-use-system-gmp-mpfr-mpc.patch note above for why
-  # GMP/MPFR/MPC no longer are), but ccache caches the resulting object
-  # files in the container's persistent $HOME/.ccache (the udocker
-  # container itself is reused across `emblab build` runs, not recreated —
-  # see ADR-004), so a from-scratch rebuild is much faster on a warm cache.
-  # Also gives some resilience against CONTEXT.md's still-unexplained bug
-  # where the coreboot source tree gets stripped down after a crossgcc
-  # failure: the ccache dir lives outside that source tree, so it survives
-  # even a full re-clone.
-  #
-  # Also tried -m (--mirror, coreboot.org's own crossgcc-sources mirror)
-  # alongside -y — real, DOES exist in the script — but confirmed for real
-  # (`curl -sI .../crossgcc-sources/binutils-2.46.1.tar.xz` -> 404; the
-  # mirror's directory listing tops out at binutils-2.45.1.tar.xz, lagging
-  # this script's pinned 2.46.1, even though it does carry a matching
-  # gcc-15.2.0.tar.xz) that this exact pinned binutils isn't there yet.
-  # Reverted back to plain -y — ftpmirror.gnu.org (the default, no -m) is
-  # the only source with the exact pinned version for both packages.
-  setup: make crossgcc-aarch64 CPUS=${env.JOBS} BUILDGCC_OPTIONS=-y
+  # XGCCPATH points make at coreboot-sdk's prebuilt toolchain instead of
+  # coreboot's own util/crossgcc/xgcc (which nothing here ever populates
+  # any more — no build.setup, no from-source crossgcc build). See the
+  # description's Toolchain paragraph for why this replaced the earlier
+  # from-source approach (and its now-removed GMP/MPFR/MPC patch, ccache
+  # flag, gnat-12 builddep).
   command: >-
     set -e;
-    make KBUILD_DEFCONFIG=${vars.defconfig} defconfig;
+    make XGCCPATH=/opt/xgcc/bin/ KBUILD_DEFCONFIG=${vars.defconfig} defconfig;
     if [ -n "${vars.payload_conf}" ]; then printf '%s\n' "${vars.payload_conf}" >> .config; fi;
-    make -j${env.JOBS}
+    make XGCCPATH=/opt/xgcc/bin/ -j${env.JOBS}
 artifacts:
   rom: build/coreboot.rom
