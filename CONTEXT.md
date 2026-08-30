@@ -422,6 +422,90 @@ forking the component or affecting targets that don't want it.
   identity) are each confirmed for real via non-interactive
   `bash -i -c '...'` probes against the real `emblab-gnu-aarch64`
   container, but a live session is the real proof, see Next.
+- 2026-08-31: **`emblab build qemu-arm64-coreboot-barebox` succeeds for
+  real** — the first successful build this target has ever had, after
+  the from-source-crossgcc path (see the old Next item 12, now resolved)
+  was abandoned in favor of coreboot's own official prebuilt SDK image
+  (`docker.io/coreboot/coreboot-sdk`, new `manifests/images/coreboot-sdk.yaml`).
+  Confirmed for real against the pulled image before ever touching a
+  manifest: `/opt/xgcc/bin/aarch64-elf-gcc` is GCC 14.2.0, already carries
+  a "coreboot toolchain" version banner (built via this project's own
+  `buildgcc`, just distributed prebuilt) so `toolchain.mk`'s own
+  `-v`-banner check accepts it with no `CONFIG_ANY_TOOLCHAIN` workaround,
+  and compiles `-std=gnu23` cleanly. `XGCCPATH=/opt/xgcc/bin/` (coreboot's
+  own override mechanism, confirmed real in `util/xcompile/xcompile`)
+  replaces `make crossgcc-aarch64` entirely — no more `build.setup`, no
+  GMP/MPFR/MPC patch, no `ccache` flag, no `gnat-12` builddep, no
+  builddeps of any kind for this component.
+  Four more real, distinct bugs surfaced and fixed getting from "image
+  pulls" to "real ROM comes out the other end", each confirmed against a
+  real build attempt, not guessed:
+  1. **coreboot-sdk's apt sources 404 on `apt-get update`**: its
+     `/etc/apt/sources.list.d/debian.sources` ships `Suites: stable
+     stable-updates`, a floating alias — Debian's own "stable" has since
+     moved from bookworm to trixie, which apt refuses to fetch from
+     without an explicit opt-in. Rather than just accept the change (real
+     libc/ABI mismatch risk, installing trixie packages into what's
+     actually still a bookworm rootfs), pinned the suite names to
+     `bookworm`/`bookworm-updates`/`bookworm-security` explicitly.
+  2. **CONTEXT.md's long-standing "mystery source-tree-wipe" bug,
+     root-caused for real at last** (see the old Next item 12's history):
+     coreboot's own `Makefile.mk` (not this project's) runs a bare,
+     unconditional `git submodule update --init` (no path filter) at
+     parse time unless `UPDATED_SUBMODULES` is already `1` — ungated by
+     any make target, so it ran even for a plain `defconfig`, ignoring
+     this project's own scoped `source.submodules` init entirely and
+     trying to pull every submodule `.gitmodules` lists. Confirmed via an
+     isolated repro outside any container: on a plain host filesystem
+     this just left the tree intact but heavily bloated (ffs,
+     intel-sec-tools, libgfxinit, libhwbase, open-power-signing-utils,
+     opensbi, stm, vboot, 3x amd/opensil, util/goswid,
+     util/nvidia/cbootimage — none needed). Under udocker, the same
+     operation instead reproduced the exact wipe signature twice in a
+     row. The udocker-specific destructiveness itself is still not
+     understood, but setting `UPDATED_SUBMODULES=1` sidesteps the whole
+     block, and the target has built successfully several times since.
+  3. **Missing `3rdparty/vboot` submodule**: an earlier guess that
+     qemu-aarch64 needs no submodules besides arm-trusted-firmware was
+     wrong — confirmed for real, `cbfstool`'s build failed with `fatal
+     error: vb2_sha.h: No such file or directory`;
+     `commonlib/bsd/include/commonlib/bsd/cbfs_serialized.h`
+     unconditionally includes it from vboot, needed by the host-tool
+     build regardless of whether verified boot itself is enabled, not
+     Kconfig-gated at all. Added to `source.submodules`.
+  4. **`HOSTCC` needs the same `-std=gnu23` fix as the target compiler,
+     via a different path**: coreboot's host tools (`cbfstool`,
+     `util/sconfig`, ...) build with `$(HOSTCC)`, which defaults to the
+     container's system `gcc` — confirmed for real, coreboot-sdk is
+     Debian-bookworm-based same as `gnu-aarch64` (`gcc --version` ->
+     Debian 12.2.0-14, no gcc-13/14/15 present), so `XGCCPATH` alone
+     doesn't cover it. coreboot-sdk bundles its own `clang-18` (coreboot
+     officially supports building with clang), confirmed to compile
+     `-std=gnu23` cleanly, so `HOSTCC`/`HOSTCXX` point there instead.
+  Also hit, and root-caused, real reproducible flakiness in `git
+  submodule update --init --recursive --depth 1` against
+  arm-trusted-firmware's own nested submodules (its own `mbed-tls`, which
+  has its own nested `framework` submodule): a different nested submodule
+  failed each time with a "No such file or directory" for a path git
+  should have just created, and a failed attempt corrupted
+  `.git/modules/<submodule>` enough that a bare retry of the identical
+  command failed differently again. `sources.py`'s `_init_submodules` now
+  retries up to 3 times, re-cloning the whole component from scratch
+  before each retry (not just re-running the same command) — new offline
+  regression test pins this. Separately, a good deal of the day's earlier
+  apparent instability (files vanishing from manifests mid-edit, git
+  state that didn't match expectations) turned out to just be the user
+  and the assistant running `emblab build` concurrently against the same
+  `workspace/` with no locking at all — not a udocker/PRoot bug. Worth a
+  real fix (a lockfile around workspace access) if this recurs; not
+  attempted this session.
+  End result, confirmed for real: a genuine 16 MiB
+  `workspace/artifacts/qemu-arm64-coreboot-barebox/coreboot/rom`, its
+  FMAP layout printed back by `cbfstool` after writing showing a real
+  `fallback/payload` CBFS section (1338586 bytes, non-zero — barebox
+  really is bundled in). `emblab run` (actual QEMU boot) was launched for
+  real afterward; full boot confirmation still pending, see Next.
+  73/73 offline tests pass.
 
 ## In progress
 Nothing in flight.
@@ -487,183 +571,17 @@ Nothing in flight.
     (`chmod -R u+rwx`), not fixed in the driver. Either wrap the rmtree with
     an `onerror` handler that chmods-and-retries, or have `cmd_clean` run
     `udocker rm` on every tracked container first.
-12. `emblab build qemu-arm64-coreboot-barebox` — currently BLOCKED on a
-    real upstream coreboot bug, not an emblab manifest issue. 2026-08-30
-    session fixed every guessed detail this target originally shipped
-    with (all confirmed against real clones — see Proven): the
-    `crossgcc-aarch64` target name (was `crossgcc-arm64`); the defconfig
-    (`configs/config.emulation_qemu-aarch64` doesn't exist upstream —
-    replaced with a minimal fragment the component now supplies itself,
-    `manifests/components/coreboot/files/configs/config.emblab_qemu_aarch64`);
-    submodule scoping (was pulling in coreboot's entire unrelated
-    `3rdparty/` vendor-submodule set — see ADR-008's amendment); and
-    barebox's own defconfig (target had `efi_v8_defconfig`, an EFI/PE32
-    build wrong for coreboot's raw `PAYLOAD_ELF` — fixed to
-    `multi_v8_defconfig`, confirmed to produce the same `barebox-dt-2nd.img`
-    every other target uses). Pointing coreboot at the image's external
-    `aarch64-linux-gnu-` toolchain instead of building crossgcc was also
-    tried for real (via `CONFIG_ANY_TOOLCHAIN=y`) and confirmed NOT
-    viable: coreboot's `main` requires GCC 14+ (`-std=gnu23` in
-    `Makefile.mk`), the `gnu-aarch64` image only has GCC 12.2.0 (host and
-    cross), and bookworm-backports carries no newer `gcc` package at all —
-    reverted to `make crossgcc-aarch64` per explicit user direction after
-    presenting the tradeoff.
-    **The real, current blocker**: `make crossgcc-aarch64` itself fails
-    building coreboot's own toolchain — reproduced identically twice from
-    a clean clone — applying
-    `util/crossgcc/patches/gcc-15.2.0_asan_shadow_offset_callback.patch`:
-    the patch's diff header targets `gcc/asan.c`, but the `gcc-15.2.0`
-    tarball it's applied against has `gcc/asan.cc` (renamed upstream in
-    GCC at some point after the patch was last updated) — `patch` can't
-    auto-locate the file, prompts interactively for a filename with no
-    tty attached, and the patch is skipped/fails, aborting the whole
-    crossgcc build (`util/crossgcc/buildgcc`'s own `-y`/`--nocolor`
-    auto-answer flags, used by upstream's own Jenkins CI per
-    `Makefile.mk`'s `jenkins-build-toolchain` target, are NOT what our
-    `crossgcc-aarch64` command invokes — worth trying next). This is
-    upstream coreboot/GCC-tarball staleness on the currently-pinned
-    `ref: main`, not anything in this project's manifests.
-    **Also observed, real and 100% reproducible (not a one-off), but
-    root cause NOT understood**: immediately after that crossgcc failure,
-    the coreboot clone's top level is left stripped down to just
-    `3rdparty/`, `payloads/`, `tests/`, `util/` — `Makefile`, `src/`,
-    `configs/`, `.git`, `Documentation/`, etc. are all gone, confirmed via
-    `find -maxdepth 1` both times, on two independent clean clones. Not
-    disk space (282G free throughout). `emblab`'s own git repo is
-    unaffected — `workspace/src/coreboot`'s `git status` was initially
-    (wrongly) read as emblab's own repo status because `.git` itself was
-    among the missing paths, which is what surfaced this. coreboot's own
-    `clean-for-update` target (`rm -rf $(obj) .xcompile`, checked against
-    a fresh scratch clone) is NOT the cause — too narrow. Never
-    investigated further (would need tracing the actual `make`/`patch`
-    process under udocker/PRoot, e.g. checking whether `$(top)`/`pwd`
-    resolves differently than the real host bind-mount path under proot's
-    syscall emulation) — worth a closer look if this recurs on a
-    component that isn't already blocked upstream, since silently losing
-    most of a source tree is a more serious class of udocker/PRoot issue
-    than the container-registry flakiness ADR-012 already documented.
-    Next attempt: either retry with `BUILDGCC_OPTIONS=-y` (skips the
-    interactive prompt, may or may not actually fix the patch mismatch),
-    hand-fix the patch's path (`gcc/asan.c` -> `gcc/asan.cc`) via this
-    project's own patch-application mechanism if that's viable for
-    crossgcc's internal patches, or pin `coreboot`'s `ref` to a commit
-    before this GCC 15.2.0 bump.
-    **2026-08-30 follow-up (not yet re-attempted for real)**: user reported
-    a real `make crossgcc-aarch64` run getting further than the above (the
-    `asan.c`/`asan.cc` patch applied clean this time — possibly upstream
-    drift again, unconfirmed) but restarting the whole
-    gmp/mpfr/mpc/binutils/gcc-15.2.0 download-and-build from scratch on
-    every retry, plus hitting `buildgcc`'s "No compatible Ada compiler
-    (GNAT) found" notice. Root-caused the rebuild-from-scratch part as an
-    emblab driver gap, not upstream: `coreboot.yaml`'s `make
-    crossgcc-aarch64` line lived in `build.command`, which has no
-    inter-step idempotency of its own — any retry re-ran it in full even
-    though `make crossgcc-aarch64` should itself be a no-op the second time.
-    Fixed by moving it into `build.setup` (ADR-011's tracked/forced-
-    independently-of-`command` mechanism, already proven for
-    `fit-image`'s key generation) — a retry after a `command`-only failure
-    now skips crossgcc entirely via its own marker; `emblab build
-    --setup-force` still forces a real rebuild when wanted. Also added
-    `gnat-12` to the target's `builddeps` (matches `gnu-aarch64`'s system
-    `gcc` 12.2.0 — `buildgcc` needs a host GNAT matching the *host* gcc it
-    bootstraps against, not the GCC 15.2.0 being built) so the Ada frontend
-    builds instead of being silently skipped. Along the way, caught and
-    fixed a real ordering bug this refactor would otherwise have hit:
-    `build.py`'s `ensure_builddeps()` only ran inside the `build.command`
-    branch, so a component's `build.setup` step (which now needs those same
-    builddeps — e.g. `gnat-12`) would have run in a container that hadn't
-    installed them yet. Fixed by hoisting the (already marker-based
-    idempotent) `ensure_builddeps()` call to run once before `build.setup`,
-    covering both steps; new regression test
-    `test_setup_step_runs_after_builddeps_installed_and_is_skipped_when_unchanged`
-    in `tests/test_build_plan.py` pins the ordering plus setup's own
-    independent marker (skipped when unchanged, rerun only via
-    `--setup-force`).
-    **Also confirmed against the real clone**: no way exists to make
-    `buildgcc` install GMP/MPFR/MPC/binutils/GCC instead of compiling them
-    — `util/crossgcc/buildgcc`'s GCC step hardcodes
-    `--with-gmp/--with-mpfr/--with-mpc` to its own from-source build tree
-    (`util/crossgcc/xgcc`), with no flag to point at system packages, and
-    there's no `myhelp()`-listed option for it either (checked the full
-    flag list). What buildgcc DOES support, confirmed in the same script:
-    `-y|--ccache` (`BUILDGCC_OPTIONS=-y`, the same flag coreboot's own
-    `jenkins-build-toolchain` Makefile target passes) — added `ccache` to
-    the target's `builddeps` and `BUILDGCC_OPTIONS=-y` to `coreboot.yaml`'s
-    `setup`. Still compiles from source every time, but caches objects in
-    the udocker container's persistent `$HOME/.ccache` (the container is
-    reused across runs, not recreated — ADR-004), which should also help
-    resilience against the mystery source-tree-wipe bug below since the
-    cache lives outside the source tree.
-    **User then asked to avoid building GMP/MPFR/MPC/binutils/GCC from
-    source entirely, "install the deps instead of building them"**. Read
-    the real `util/crossgcc/buildgcc` script in full to check feasibility:
-    confirmed binutils/GCC 15.2.0 themselves have no install-instead-of-
-    build option (no flag, and no matching pre-built aarch64-elf bare-metal
-    GCC 15.2.0-with-coreboot's-patches exists as a distro package — same
-    conclusion as the already-ruled-out CONFIG_ANY_TOOLCHAIN route above).
-    But GMP/MPFR/MPC are different: they're pure host build-prerequisites
-    for GCC's own configure (binutils's own build never references them at
-    all — confirmed, `build_BINUTILS()` has no `--with-gmp`/etc), the
-    `-P GCC` package list (`PACKAGES="GMP MPFR MPC BINUTILS GCC"`) is driven
-    entirely by one script variable with no other conditional gating the
-    download/build loops, and `bootstrap_GCC()`/`configure_GCC()`'s
-    `--with-gmp=$TARGETDIR`/`--with-mpfr=$TARGETDIR`/`--with-mpc=$TARGETDIR`
-    just needs to be **absent** for GCC's configure to auto-detect the
-    system copies instead (standard distro-packaging practice, not a hack).
-    New `files/0001-crossgcc-use-system-gmp-mpfr-mpc.patch` (against
-    `util/crossgcc/buildgcc`, ADR-007's mechanism, first patch for this
-    component) drops `GMP MPC MPFR` from that package list and removes the
-    three `--with-*` flags from both functions — generated as a real `git
-    diff` directly against the actual clone under
-    `workspace/src/coreboot` (not hand-reconstructed), and confirmed with
-    `git apply --check` against that same clone (reverted after generating
-    the patch, clone left unmodified). `libgmp-dev`/`libmpfr-dev`/
-    `libmpc-dev` were already in the target's `builddeps` from the earlier
-    session (added in case buildgcc's own build of GMP/MPFR/MPC needed
-    them as build-time deps — turns out they're now needed for a different
-    reason, providing the system copies directly); Debian bookworm's
-    versions (GMP 6.2.1, MPFR 4.2.0, MPC 1.3.1) are well above GCC 15.2.0's
-    minimums. 71/71 offline tests pass (no new test — same precedent as
-    the FvBootDxe/dummy-hwrng patches, which also aren't offline-content-
-    tested, just `git apply --check`-verified and documented here). NONE of
-    this session's coreboot-toolchain changes (setup/builddeps reorder,
-    `gnat-12`, `ccache`, or this new patch) are real-build-verified yet —
-    this doesn't touch the still-open `asan.c`/`.cc` or mystery-source-tree-
-    wipe issues below, which need a real run to re-check; the source-tree
-    wipe bug in particular could also wipe this new patch's applied state,
-    same as anything else in that tree, forcing `sources.py`'s own
-    patches-hash re-apply logic to redo it on the next build (expected
-    behavior, not new risk).
-    **2026-08-31: real attempt surfaced a genuine `sources.py` gap, not an
-    upstream one this time.** A real `make crossgcc-aarch64` run still
-    tried to download `mpc-1.4.1.tar.xz` even though the GMP/MPFR/MPC
-    patch above was supposedly already applied — root cause: the patch
-    *had* been applied for real (`.emblab-patches-hash` in the real clone
-    exactly matched the hash for `["0001-crossgcc-...patch"]`, and
-    `_apply_patches()`'s `git apply ... check=True` can't leave a marker
-    written without a real successful apply), but something outside
-    emblab (most likely a manual `git checkout`/reset on that one file
-    while poking at the build by hand) reverted `util/crossgcc/buildgcc`
-    back to unpatched afterward — confirmed by re-reading the real file
-    and finding `PACKAGES="GMP MPFR MPC BINUTILS GCC"` again. `sources.py`
-    has no way to catch this: `ensure_source()`'s idempotency check only
-    ever compares its own stored marker against the *declared* patch list
-    (`state.patches_hash`), never re-verifies the working tree still
-    reflects it — a real gap, not just a theoretical one now. Worked
-    around by hand (re-`git apply`ing the same patch directly onto the
-    live clone; not fixed in the driver). Also added `-m`
-    (`--mirror`, confirmed real in the script, coreboot's own
-    `Makefile.mk` documents it too) to `BUILDGCC_OPTIONS` alongside `-y`
-    — fetches each package from coreboot.org's own `crossgcc-sources`
-    mirror instead of its individual upstream URL, same filename either
-    way. **Still UNVERIFIED**: whether that mirror actually carries this
-    script's exact pinned `binutils-2.46.1`/`gcc-15.2.0` — the next real
-    attempt is the first real test of `-m` actually helping vs. 404ing.
-    If `workspace/src/<component>` hand-edits recur, worth a
-    `sources.py` follow-up: either re-verify a patch's effect (e.g. hash
-    the post-patch file, not just the patch inputs) or just document more
-    prominently that `workspace/` is emblab's own working tree and
-    shouldn't be hand-edited outside of it.
+12. ~~`emblab build qemu-arm64-coreboot-barebox` blocked on crossgcc~~ —
+    **RESOLVED for real, 2026-08-31: the whole from-source-crossgcc
+    approach was abandoned, not fixed.** After extensive real debugging of
+    `make crossgcc-aarch64` (a GCC-tarball `asan.c`/`.cc` patch mismatch,
+    then a from-scratch-every-retry driver gap fixed via `build.setup`,
+    then a real `sources.py` patch-verification gap, then real download
+    404s trying a `-m`/mirror flag — the full blow-by-blow of that
+    abandoned path is preserved in this file's git history, not repeated
+    here), the user asked to use coreboot's own official prebuilt SDK
+    image instead. See Proven's 2026-08-31 entry for the real, successful
+    outcome and everything that took to get there.
 13. **ADR-013's `emblab shell` devshell** — every individual mechanism
     (`--hostauth`/`--user=` non-root, `bash --rcfile ... -i`, the
     bash-completion dynamic loader) is confirmed against a real container
@@ -672,6 +590,22 @@ Nothing in flight.
     target) session and pressed TAB for real, or confirmed the prompt/
     `cd`-ability/general usability feels right end to end. Cheap to check
     next time any target's build environment needs poking at by hand.
+14. `emblab run qemu-arm64-coreboot-barebox` — confirm the real
+    `coreboot.rom` from the build above actually boots and hands off to
+    barebox for real, the same way every other target's `emblab run` has
+    already been confirmed. A real run was launched (QEMU came up,
+    serial console attached) but the actual boot log wasn't captured in
+    this session — check for a real barebox shell prompt on serial, same
+    proof bar as the other targets' Proven entries use.
+15. `workspace/` has zero locking around concurrent access — confirmed a
+    real, repeated source of "directory not empty"/git-corruption
+    failures this session when two `emblab build` invocations (this
+    session's own attempts and the user's, run at the same time) hit the
+    same component's source tree. Worth a real fix if this recurs: a
+    lockfile per target (or per component) that `emblab build`/`emblab
+    run` hold for their duration, refusing or waiting rather than racing.
+    Not attempted this session — real build attempts were serialized by
+    hand instead once the pattern was recognized.
 
 ## Open questions
 - Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox`,

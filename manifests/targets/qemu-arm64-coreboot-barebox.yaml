@@ -14,11 +14,11 @@ description: >
   native barebox-dt-2nd.img every other arm64 target already uses via
   ${barebox.images} — that's what coreboot's generic PAYLOAD_ELF expects.
 
-  UNVERIFIED end-to-end — see coreboot.yaml's description and CONTEXT.md's
-  Next section: this needs a real `emblab build
-  qemu-arm64-coreboot-barebox` (and then `emblab run`) to confirm that
-  CONFIG_PAYLOAD_ELF actually accepts barebox's multi_v8_defconfig output
-  as-is.
+  `emblab build qemu-arm64-coreboot-barebox` succeeds for real (see
+  CONTEXT.md's Proven) — CONFIG_PAYLOAD_ELF does accept barebox's
+  multi_v8_defconfig output as-is, a real coreboot.rom with a real
+  fallback/payload CBFS section is produced. `emblab run` (actually
+  booting it in QEMU) is still unconfirmed — see CONTEXT.md's Next.
 arch: arm64
 stack:
   - component: barebox
