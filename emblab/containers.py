@@ -123,9 +123,16 @@ def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, c
     return _udocker(args, workspace, check=check)
 
 
-def shell(image, workspace):
+def shell(image, workspace, *, workdir="/", bind_mounts=(), log=print):
     """Interactive shell inside the provisioned container, for debugging a
-    build by hand. Same helpers/ bind mount as run() — fitkeys-ctl,
+    build (or, via build.py's shell_context(), a component's real build
+    environment) by hand. Same helpers/ bind mount as run() — fitkeys-ctl,
     tsa-stamp, etc. are on PATH here too."""
-    args = ["run", f"--volume={HELPERS_DIR}:{HELPERS_MOUNT}", "--workdir=/", container_name(image), "sh"]
+    args = ["run", f"--volume={HELPERS_DIR}:{HELPERS_MOUNT}"]
+    for host_path, container_path in bind_mounts:
+        args.append(f"--volume={host_path}:{container_path}")
+    args.append(f"--workdir={workdir}")
+    args.append(container_name(image))
+    args.append("sh")
+    log(f"[{image.name}] shell: {workdir}")
     subprocess.run(["udocker", *args], env=_udocker_env(workspace))

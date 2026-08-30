@@ -56,7 +56,14 @@ def cmd_run(args):
 
 
 def cmd_shell(args):
-    image = manifests.load_image(args.image)
+    if manifests.target_path(args.name).exists():
+        image, src_dir = build_mod.shell_context(args.name, WORKSPACE, args.component)
+        containers.shell(image, WORKSPACE, workdir=str(src_dir), bind_mounts=[(str(WORKSPACE), str(WORKSPACE))])
+        return
+
+    if args.component:
+        raise EmblabError(f"--component only applies to a target, but '{args.name}' is not one")
+    image = manifests.load_image(args.name)
     containers.shell(image, WORKSPACE)
 
 
@@ -140,8 +147,15 @@ def build_parser():
     p_run.add_argument("--rebuild", action="store_true", help="force a rebuild before running")
     p_run.set_defaults(func=cmd_run)
 
-    p_shell = sub.add_parser("shell", help="interactive shell in a provisioned build image")
-    p_shell.add_argument("image")
+    p_shell = sub.add_parser(
+        "shell",
+        help="interactive devshell: NAME is a target (its build environment) or a raw image",
+    )
+    p_shell.add_argument("name", help="target name (devshell) or image name (raw provisioned image)")
+    p_shell.add_argument(
+        "--component", default=None,
+        help="when NAME is a target: shell into this component's build env (default: the target's last stack entry)",
+    )
     p_shell.set_defaults(func=cmd_shell)
 
     p_clean = sub.add_parser("clean", help="remove build artifacts/state")
