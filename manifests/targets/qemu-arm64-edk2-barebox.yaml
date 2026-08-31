@@ -27,8 +27,12 @@ stack:
       edk2_arch: AARCH64
       # See qemu-arm64-edk2-fvbootdxe-barebox.yaml's comment: EDK2's own
       # Build/<platform>-<arch> output directory uses a differently-cased
-      # "friendly" arch name than the -a flag/env var spelling above.
-      edk2_build_arch: AArch64
+      # "friendly" arch name than the -a flag/env var spelling above. The
+      # leading "-" is part of this var (not edk2.yaml's artifacts.fd
+      # template) so the same template also serves UefiPayloadPkg.dsc's
+      # differently-shaped, hyphen-less OUTPUT_DIRECTORY — see
+      # qemu-arm64-coreboot-barebox.yaml's edk2 stack entry.
+      edk2_build_arch: "-AArch64"
   - component: barebox
     image: gnu-aarch64
     vars:

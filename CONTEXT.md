@@ -543,7 +543,7 @@ hand-editing it under `workspace/src/<path>`.
   `arch/Kconfig` documents `BOARD_GENERIC_FIT` as producing an image
   "bootable from coreboot, barebox, or any other bootloader capable of
   booting a Linux kernel out of FIT images" — new
-  `manifests/components/barebox/files/generic-fit.cfg` merges it in via
+  `manifests/components/barebox/files/esp.cfg` merges it in via
   the existing `extra_conf` mechanism, `python3-libfdt` added as a target
   `builddeps` entry for `scripts/make_fit.py`'s `import libfdt`. Two more
   real, confirmed bugs surfaced getting the FIT path this far: (1) coreboot
@@ -771,6 +771,101 @@ hand-editing it under `workspace/src/<path>`.
   all share the identical `mon:stdio`-without-`-display` pattern and now
   get the same fix automatically via the driver default — none of them
   has actually been run since, still open, see Next.
+- 2026-08-31: **`qemu-arm64-coreboot-barebox` payload switched again, from
+  barebox's own FIT (confirmed booting for real, see the entry above) to
+  a real edk2 `UefiPayloadPkg` build as coreboot's payload, with barebox
+  now booting off a virtio-blk-attached UEFI removable-media disk image
+  instead of being bundled into CBFS directly — a deliberate architecture
+  change on explicit direction ("barebox must be built as an efi stubbed
+  payload and ... coreboot either [has] the capacity to load efi stubbed
+  binaries or load something that will do it"), not a regression from the
+  previously-working FIT approach (that config's full history is preserved
+  above; this target's own file now documents the new one instead of
+  both). **Two real, confirmed-and-fixed bugs, one real unresolved
+  blocker**:
+  1. Coreboot's own `payloads/external/edk2/Makefile` (the thing
+     `CONFIG_PAYLOAD_EDK2`/`CONFIG_EDK2_UEFIPAYLOAD` would normally
+     trigger) hardcodes `-a IA32 -a X64`/`-D BUILD_ARCH=X64` (and `-a
+     IA32` for the Universal Payload variant) with no AARCH64 codepath at
+     all — confirmed by reading the whole file — despite
+     `Kconfig.name`'s `depends on ARCH_X86 || ARCH_ARM64` nominally
+     allowing selection on this board. Worked around by building
+     `UefiPayloadPkg` for AARCH64 through this project's own `edk2`
+     component instead (already proven for `ArmVirtQemu`) — confirmed for
+     real that `UefiPayloadPkg.dsc` genuinely does declare
+     `SUPPORTED_ARCHITECTURES = IA32|X64|AARCH64` and has a real
+     `[Components.AARCH64]`/`[LibraryClasses.AARCH64]` section (PL011
+     serial, VirtioBlkDxe/PartitionDxe/FatPkg/BdsDxe for real UEFI
+     removable-media boot) — it is coreboot's own Makefile integration
+     that never grew an AARCH64 path, not upstream edk2. `edk2.yaml`
+     gained `vars.build_macros` (extra `-D` flags, empty by default, same
+     conditionally-populated-var trick as `fv_boot_app_flag`) and
+     `vars.fd_name` (the FDF's own FD output filename differs per
+     platform: `QEMU_EFI.fd` for `ArmVirtQemu`, `UEFIPAYLOAD.fd` — real,
+     confirmed uppercased regardless of the `[FD.UefiPayload]` section's
+     own casing — for `UefiPayloadPkg`); `artifacts.fd`'s template also
+     dropped its hardcoded hyphen (`UefiPayloadPkg.dsc` sets its own
+     `OUTPUT_DIRECTORY = Build/UefiPayloadPkg$(BUILD_ARCH)` with none,
+     confirmed by reading the dsc, unlike `ArmVirtQemu.dsc`'s hyphenated
+     EDK2-default naming) in favor of putting the hyphen in
+     `edk2_build_arch` itself, so the same template serves both — the two
+     already-proven `ArmVirtQemu` targets updated to
+     `edk2_build_arch: "-AArch64"` accordingly, re-verified against the
+     real manifest loader (`emblab show target`), not just offline tests.
+     Fed into coreboot via `CONFIG_PAYLOAD_ELF` (not `CONFIG_PAYLOAD_EDK2`,
+     for the reason above) — confirmed correct for real by reading
+     `util/cbfstool/cbfstool.c`: `add-payload`'s
+     `cbfstool_convert_mkpayload` tries ELF, then FIT, then a raw UEFI
+     firmware volume (`parse_fv_to_payload`) before giving up, and the
+     real `UEFIPAYLOAD.fd` built here is a raw FV (confirmed via `od`:
+     `_FVH` signature at file offset 0x28, no ELF magic at all), so it is
+     picked up via that FV fallback despite the misleading Kconfig name —
+     same generic cbfs "payload" type barebox's own former FIT payload
+     used.
+  2. `UefiPayloadPkg.fdf`'s own `DEFINE FD_BASE = 0x00800000` default
+     (also feeds `PcdPayloadFdMemBase`) is an x86 assumption — confirmed
+     for real to fail on this board: a first real build+boot attempt got
+     a genuine `cbfstool` `SELF segment doesn't target RAM: 0x00800000`
+     at runtime, since this board's real RAM (confirmed from the same
+     boot log's own coreboot table dump) only starts at `0x40000000`.
+     Fixed via `-D FD_BASE=0x48000000` in the edk2 stack entry's
+     `build_macros`, comfortably inside the free RAM range coreboot's own
+     table showed unused. Also ruled out, cleanly but not the actual
+     cause: `payloads/Kconfig`'s payload-compression choice defaults to
+     `COMPRESSED_PAYLOAD_NONE` only when `PAYLOAD_FIT_SUPPORT` is
+     selected (which barebox's former `CONFIG_PAYLOAD_FIT` payload got
+     automatically, `CONFIG_PAYLOAD_ELF` does not) — confirmed by reading
+     `payloads/Kconfig` directly, and confirmed for real via a second boot
+     attempt with `CONFIG_COMPRESSED_PAYLOAD_NONE=y` added explicitly:
+     the boot log's own `it's not compressed!` line confirms the fix
+     applied, but produced the exact same hang, ruling out an LZMA
+     round-trip bug as the actual cause.
+  3. **Still unresolved, real**: with both fixes applied, a real boot log
+     confirms the payload segment loads correctly (uncompressed, dstaddr
+     `0x48000000` matching `FD_BASE`, entry point `0x4800321c`) and BL31
+     hands off cleanly — `coreboot`'s own `src/arch/arm64/boot.c` always
+     enters any payload at EL2 unconditionally (`get_eret_el(EL2,
+     SPSR_USE_L)`, confirmed by reading it directly), the same path
+     barebox's own FIT payload already booted through successfully, so
+     EL2 entry itself is confirmed not the problem — but there is zero
+     further console output at all past that handoff, and a real 60s
+     `emblab run` timeout confirms QEMU is still running (not
+     crashed/exited) the whole time. `x0` on entry (`0x7ffdc000`) matches
+     where coreboot's own log says it wrote its handoff table, and
+     `UefiPayloadPkg.dsc` resolves `BlParseLib` to
+     `UefiPayloadPkg/Library/CbParseLib` for `BOOTLOADER=COREBOOT`, so the
+     handoff convention looks architecturally correct by inspection alone
+     — the actual cause has not been isolated. A `-d
+     guest_errors,unimp,int -D <logfile>` QEMU diagnostic attempt produced
+     no log file at all (real, unexplained — worth a follow-up in its own
+     right, not investigated further this session) so no CPU-exception
+     trace was captured either. Real next steps: a QEMU gdbstub-attached
+     session (`-s -S`, then inspect PC/registers directly), or an early
+     raw MMIO UART poke patched directly into
+     `UefiPayloadPkg/UefiPayloadEntry/UefiPayloadEntry.c` (module type
+     `SEC`, `_ModuleEntryPoint`) to bisect how far real execution gets
+     before whatever is silencing it — see Next.
+  83/83 offline tests pass unchanged.
 ## In progress
 Nothing in flight.
 
@@ -870,7 +965,20 @@ Nothing in flight.
     lockfile per target (or per component) that `emblab build`/`emblab
     run` hold for their duration, refusing or waiting rather than racing.
     Not attempted this session — real build attempts were serialized by
-    hand instead once the pattern was recognized.
+    hand instead once the pattern was recognized. Recurred again this
+    session (two concurrent coreboot builds this time), same symptom
+    shape (random `unable to rename temporary ... No such file or
+    directory` failures across unrelated object files, from a
+    concurrent `rm -rf build` racing an in-flight `-j` compile) —
+    resolved by hand again, same as before, not the driver.
+16. `qemu-arm64-coreboot-barebox`'s new UefiPayloadPkg-as-coreboot-payload
+    approach still does not boot — the payload loads and BL31 hands off
+    to it cleanly, but there is zero console output past that point and
+    the real cause has not been isolated yet. See Proven's 2026-08-31
+    entry for everything already ruled out (load address, EL2 entry,
+    compression) and the two concrete next diagnostic steps (QEMU
+    gdbstub session, or an early raw UART poke patched into
+    `UefiPayloadEntry.c`).
 
 ## Open questions
 - Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox`,

@@ -18,14 +18,19 @@ source:
   ref: master
   path: barebox
 build:
-  # generic-fit.cfg is barebox's own documented mechanism for coreboot
-  # compatibility (arch/Kconfig's BOARD_GENERIC_FIT help text says so
-  # verbatim: "bootable from coreboot, barebox, or any other bootloader
-  # capable of booting a Linux kernel out of FIT images") — always copied
+  # esp.cfg turns on CONFIG_EFI_PAYLOAD_ESP_IMAGE (efi/payload/Kconfig),
+  # producing a real bootable GPT/FAT disk image (images/barebox.esp,
+  # via scripts/mkesp wrapping scripts/mkvfat) with barebox's own EFI
+  # stub placed at the standard UEFI removable-media path
+  # (EFI/BOOT/BOOTAA64.EFI, efi/Kconfig's PcdEfiPayloadDefaultPath
+  # default) — any spec-compliant UEFI firmware's own Boot Manager
+  # auto-discovers and boots it with no custom driver code, used by
+  # qemu-arm64-coreboot-barebox to let its UefiPayloadPkg firmware boot
+  # barebox off a virtio-blk-attached copy of this image. Always copied
   # in via build.files (ADR-005/007), only merged when a target's
-  # extra_conf opts in (see qemu-arm64-coreboot-barebox).
+  # extra_conf opts in.
   files:
-    - generic-fit.cfg
+    - esp.cfg
   # vars.arch has no default here — arch is a target concern, not a
   # component one (see ADR-009); every target's stack entry for barebox
   # must set it. $CROSS_COMPILE (unbraced) is a real shell env var, set by

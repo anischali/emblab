@@ -49,6 +49,23 @@ build:
     # despite the .img name — confirmed: barebox.efi is a build-time
     # symlink to the same file).
     fv_boot_app_flag: ""
+    # Empty by default — same conditionally-populated-var trick as
+    # fv_boot_app_flag above. UefiPayloadPkg.dsc needs extra -D macros
+    # ArmVirtQemu.dsc doesn't (BUILD_ARCH, to pick its per-arch Build/
+    # output dir — UefiPayloadPkg.dsc's own DEFINE, unrelated to
+    # edk2_build_arch below which is this project's var for the same
+    # concept on the ArmVirtQemu side; BOOTLOADER=COREBOOT, to compile in
+    # coreboot glue code gated by `!if $(BOOTLOADER) == "COREBOOT"` in the
+    # dsc — confirmed by reading UefiPayloadPkg.dsc directly, default is
+    # "SBL" otherwise). A target building UefiPayloadPkg sets this to
+    # "-D BUILD_ARCH=AARCH64 -D BOOTLOADER=COREBOOT".
+    build_macros: ""
+    # QEMU_EFI.fd is ArmVirtQemu.dsc's own FDF output name (its [FD.QEMU_EFI]
+    # section, confirmed for real by every already-proven edk2 target using
+    # this component). A target building a different platform DSC (e.g.
+    # UefiPayloadPkg, whose own FDF names its output differently — see
+    # UefiPayloadPkg.fdf's [FD.UefiPayload] section) overrides this.
+    fd_name: QEMU_EFI.fd
   command: >-
     set -e;
     export PACKAGES_PATH=$PWD;
@@ -56,9 +73,17 @@ build:
     pip3 install --break-system-packages -r pip-requirements.txt;
     . ./edksetup.sh;
     make -C BaseTools;
-    build -a ${vars.edk2_arch} -t GCC -b DEBUG -p ${vars.platform_path}/${vars.platform}.dsc ${vars.fv_boot_app_flag}
+    build -a ${vars.edk2_arch} -t GCC -b DEBUG -p ${vars.platform_path}/${vars.platform}.dsc ${vars.fv_boot_app_flag} ${vars.build_macros}
 artifacts:
   # ${vars.edk2_build_arch}, not ${vars.edk2_arch} — EDK2's Build output
   # directory uses its own differently-cased "friendly" arch name (e.g.
-  # "AArch64"), not the uppercase spelling the -a flag/env var need.
-  fd: Build/${vars.platform}-${vars.edk2_build_arch}/DEBUG_GCC/FV/QEMU_EFI.fd
+  # "AArch64"), not the uppercase spelling the -a flag/env var need. No
+  # hyphen in this template on purpose — ArmVirtQemu.dsc doesn't set
+  # OUTPUT_DIRECTORY at all (EDK2's own default output-dir pattern is
+  # "<PLATFORM_NAME>-<arch>", confirmed for real: "ArmVirtQemu-AArch64",
+  # so its own edk2_build_arch carries the leading "-" itself), while
+  # UefiPayloadPkg.dsc DOES set its own explicit
+  # `OUTPUT_DIRECTORY = Build/UefiPayloadPkg$(BUILD_ARCH)` (confirmed by
+  # reading the dsc) with no hyphen at all — putting the hyphen in
+  # edk2_build_arch instead of here lets one template serve both.
+  fd: Build/${vars.platform}${vars.edk2_build_arch}/DEBUG_GCC/FV/${vars.fd_name}
