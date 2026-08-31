@@ -4,28 +4,85 @@ description: >
   its payload — coreboot's Kconfig CONFIG_PAYLOAD_FILE points straight at
   barebox's own build output, embedded into CBFS at coreboot build time.
   QEMU only needs -bios: there's no "-kernel", unlike
-  qemu-arm64-edk2-barebox — coreboot never consumes QEMU's -kernel fw_cfg
-  loader, so bundling is this target's only boot path (see coreboot.yaml's
-  description). barebox uses multi_v8_defconfig, not the efi_v8_defconfig
-  the edk2 targets use — that build is a PE32 EFI application meant to run
-  under a UEFI environment, and coreboot provides none; multi_v8_defconfig
-  sets CONFIG_ARCH_ARM64_VIRT=y (confirmed against a real clone, which
-  selects BOARD_ARM_VIRT -> BOARD_GENERIC_DT), producing the same plain
-  native barebox-dt-2nd.img every other arm64 target already uses via
-  ${barebox.images} — that's what coreboot's generic PAYLOAD_ELF expects.
+  qemu-arm64-edk2-barebox — real investigation (grepping a fresh
+  workspace/src/coreboot clone for any fw_cfg kernel-loading code, plus
+  coreboot's own docs/mailing list) confirms coreboot's qemu-aarch64
+  mainboard has no equivalent of edk2's QemuKernelLoaderFsDxe: it never
+  reads QEMU's -kernel fw_cfg entries, so bundling is this target's only
+  real boot path, not a choice. This stack entry uses multi_v8_defconfig
+  (not barebox's own component default, efi_v8_defconfig — see barebox.yaml
+  — which every other arm64 target here uses): coreboot's FIT payload
+  loader picks a /configurations entry by matching the mainboard's
+  compatible string ("qemu,qemu-aarch64", confirmed for real from a boot
+  log: "FIT: Compat preference (lowest to highest priority) :
+  qemu,qemu-aarch64") against each bundled device tree's own compatible
+  property. efi_v8_defconfig builds for UEFI and bundles no board device
+  trees at all (it relies on firmware/ACPI to supply one), so its FIT had
+  zero compatible configurations — confirmed for real: "FIT: No compatible
+  or default configs. Giving up." -> "Payload not loaded", despite the FIT
+  itself loading and its kernel image parsing correctly.
+  multi_v8_defconfig sets CONFIG_ARCH_ARM64_VIRT=y, which bundles the QEMU
+  virt board's own device tree — the one piece the earlier, abandoned
+  CONFIG_PAYLOAD_FLAT_BINARY approach never needed (raw bytes and an
+  address only, no compatible-string matching at all).
 
-  `emblab build qemu-arm64-coreboot-barebox` succeeds for real (see
-  CONTEXT.md's Proven) — CONFIG_PAYLOAD_ELF does accept barebox's
-  multi_v8_defconfig output as-is, a real coreboot.rom with a real
-  fallback/payload CBFS section is produced. `emblab run` (actually
-  booting it in QEMU) is still unconfirmed — see CONTEXT.md's Next.
+  Three real, confirmed-failed attempts before this one: (1)
+  CONFIG_PAYLOAD_ELF against images/barebox-dt-2nd.img directly (built
+  fine, failed at real runtime boot: "SELF segment doesn't target RAM:
+  0x00090000" -> "Payload not loaded" — barebox's real ARM64 Linux "Image"
+  boot header, magic "ARM\x64" confirmed at file offset 0x38 by inspection,
+  which CONFIG_PAYLOAD_ELF misreads as a genuine ELF header); (2)
+  CONFIG_PAYLOAD_ELF against ${barebox.elf} (the top-level ELF Kbuild
+  output, confirmed via `file`: "ELF 64-bit LSB pie executable ...
+  static-pie linked") — failed the same way ("SELF segment doesn't target
+  RAM: 0x00000000") because it is a PIE ELF whose vaddrs are relative to a
+  base of 0, not real physical addresses, and CONFIG_PAYLOAD_ELF's SELF
+  loader takes ELF vaddrs at face value; (3) CONFIG_PAYLOAD_FLAT_BINARY
+  against images/barebox-dt-2nd.img with an explicit load/entry address
+  (0x40080000, matching where QEMU's own -kernel loader already places
+  this file for every other arm64 target) — this one never even reached
+  runtime: PAYLOAD_FLAT_BINARY/PAYLOAD_FILE/PAYLOAD_OPTIONS all live inside
+  payloads/Kconfig's `if !PAYLOAD_NONE` choice block, PAYLOAD_NONE defaults
+  to y on arm64, and this attempt's appended Kconfig lines never unset it —
+  confirmed for real: the resulting .config still had CONFIG_PAYLOAD_NONE=y
+  and none of the appended lines at all, so cbfstool fell back to its plain
+  `add` command (no -l/-e support), failing "invalid option -- l".
+
+  Rather than keep patching CONFIG_PAYLOAD_FLAT_BINARY's choice-visibility
+  and address-guessing problems, this target now uses CONFIG_PAYLOAD_FIT —
+  barebox's own arch/Kconfig documents BOARD_GENERIC_FIT verbatim as
+  "bootable from coreboot, barebox, or any other bootloader capable of
+  booting a Linux kernel out of FIT images", producing
+  images/barebox-arm64.fit via scripts/make_fit.py --os linux (confirmed by
+  reading barebox's real scripts/Makefile.lib), i.e. a real kernel+fdt FIT
+  container matching coreboot's own FIT payload doc
+  (https://doc.coreboot.org/lib/payloads/fit.html) exactly, with no
+  hand-guessed load address needed. **CONFIRMED booting for real**:
+  `emblab build` succeeds, and `emblab run` shows coreboot's FIT loader
+  picking "conf-qemu-virt64.dtb" for compat "linux,dummy-virt" (fixed via
+  the CONFIG_MAINBOARD_VENDOR/CONFIG_MAINBOARD_PART_NUMBER override
+  above), BL31 handing off to 0x40080000, and barebox itself coming up
+  ("barebox 2026.08.0-... Board: ARM QEMU virt64") on the real serial
+  console — see CONTEXT.md's Proven.
 arch: arm64
 stack:
   - component: barebox
     image: gnu-aarch64
+    # python3-libfdt: scripts/make_fit.py (`import libfdt`) needs it to
+    # build images/barebox-arm64.fit — gnu-aarch64's baseline provisioning
+    # has python3 but not this binding, confirmed by grepping its own
+    # provision: apt-get list.
+    builddeps:
+      - python3-libfdt
     vars:
       defconfig: efi_v8_defconfig
       arch: arm64
+      # Merges in generic-fit.cfg (see barebox.yaml's build.files) to turn
+      # on BOARD_GENERIC_FIT, which is off by default — a plain bool, not
+      # part of a choice group, so a direct merge_config.sh merge (what
+      # extra_conf triggers) resolves it correctly with no visibility
+      # pitfall like coreboot's payload choice below.
+      extra_conf: generic-fit.cfg
   - component: coreboot
     # coreboot-sdk ships a prebuilt cross-toolchain (GCC 14.2.0, confirmed
     # real — see coreboot.yaml's Toolchain paragraph) instead of gnu-aarch64's
@@ -35,18 +92,33 @@ stack:
     # complete build with none declared.
     image: coreboot-sdk
     vars:
-      # CONFIG_PAYLOAD_FILE points at ${barebox.elf} (the real linked ELF),
-      # not ${barebox.images}/barebox-dt-2nd.img — confirmed for real: the
-      # latter is a raw flat binary (its own first bytes are literal
-      # AArch64 machine code, not an ELF header), so coreboot's
-      # CONFIG_PAYLOAD_ELF=y payload loader misparsed it as ELF and
-      # produced a bogus segment ("SELF segment doesn't target RAM:
-      # 0x00090000" -> "Payload not loaded", confirmed against a real
-      # `emblab run`). ${barebox.elf} is a genuine ELF64 PIE (`readelf -h`
-      # -> Type: DYN), which is what CONFIG_PAYLOAD_ELF actually expects.
       payload_conf: |
-        CONFIG_PAYLOAD_EDK2=y
-        CONFIG_PAYLOAD_FILE="${barebox.images}/barebox-dt-2nd.img"
+        # CONFIG_PAYLOAD_FIT (like CONFIG_PAYLOAD_FLAT_BINARY before it)
+        # lives inside payloads/Kconfig, in an `if !PAYLOAD_NONE` choice
+        # block, and PAYLOAD_NONE defaults to y on arm64 (this defconfig
+        # never overrides it) — must be explicitly unset here or Kbuild
+        # syncconfig silently drops every line below (real, confirmed
+        # failure the first time this was missed, see this description).
+        # CONFIG_PAYLOAD_NONE is not set
+        CONFIG_VENDOR_EMULATION=y
+        CONFIG_BOARD_EMULATION_QEMU_AARCH64=y
+        CONFIG_PAYLOAD_FIT=y
+        CONFIG_PAYLOAD_FILE="${barebox.images}/barebox-arm64.fit"
+        # coreboot FIT loader (src/lib/fit.c) picks a /configurations
+        # entry by matching CONFIG_MAINBOARD_VENDOR,CONFIG_MAINBOARD_PART_NUMBER
+        # (lowercased, spaces/underscores to hyphens) against each bundled
+        # dtb own compatible list — confirmed for real from a boot log: the
+        # qemu-aarch64 mainboard own defaults ("QEMU" / "QEMU AArch64")
+        # normalize to "qemu,qemu-aarch64", which matches none of barebox
+        # bundled device trees, not even conf-qemu-virt64.dtb (real QEMU
+        # virt machine, compat "linux,dummy-virt" — QEMU own hw/arm/virt.c
+        # convention, unrelated to coreboot board naming) — "FIT: No
+        # compatible or default configs. Giving up." Overriding both to
+        # match the real compat string instead of patching coreboot or
+        # barebox. (No apostrophes in this comment on purpose: it lands
+        # inside build.command printf %s single quotes, see coreboot.yaml.)
+        CONFIG_MAINBOARD_VENDOR="linux"
+        CONFIG_MAINBOARD_PART_NUMBER="dummy-virt"
 qemu:
   binary: qemu-system-aarch64
   image: qemu-runner
@@ -57,8 +129,7 @@ qemu:
     - "virt,acpi=off,secure=on,virtualization=on"
     - "-m"
     - "1G"
-    - "-serial"
-    - "mon:stdio"
+    - "-nographic"
     - "-device"
     - "virtio-rng-pci"
     - "-bios"
