@@ -23,7 +23,18 @@ provision:
     for n in groupadd useradd addgroup adduser; do
     printf '#!/bin/sh\nexit 0\n' > /usr/sbin/$n; chmod +x /usr/sbin/$n; done
   - apt-get update
+  # ipxe-qemu is only a Recommends of qemu-system-arm/-misc, so
+  # --no-install-recommends drops it — confirmed for real (apt-cache depends
+  # qemu-system-arm/-misc) it's the one that ships the efi-*.rom/pxe-*.rom
+  # option ROMs, under /usr/lib/ipxe/qemu/ (NOT qemu-system-data, which was
+  # tried first and confirmed real via `dpkg -L` to carry no ROM files at
+  # all — just BIOS/VGA-BIOS blobs and sample configs). Any virtio-pci
+  # device (confirmed for real: -device virtio-rng-pci, no networking
+  # involved) defaults its romfile property to "efi-virtio.rom", so without
+  # ipxe-qemu QEMU refuses to even start: "failed to find romfile
+  # 'efi-virtio.rom'". Listed explicitly rather than dropping
+  # --no-install-recommends wholesale.
   - >-
     apt-get install -y --no-install-recommends
-    qemu-system-arm qemu-system-misc bash-completion
+    qemu-system-arm qemu-system-misc ipxe-qemu bash-completion
 env: {}

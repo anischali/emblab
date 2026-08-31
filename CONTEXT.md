@@ -601,6 +601,46 @@ hand-editing it under `workspace/src/<path>`.
   inputs. One-time cost: every component's marker hash changed shape, so
   the next `emblab build` of any existing target does one real rebuild per
   component even where nothing else changed. 79/79 offline tests pass.
+- 2026-08-31: **`emblab run qemu-arm64-coreboot-barebox` broke again**:
+  `qemu-system-aarch64: failed to find romfile "efi-virtio.rom"` on QEMU
+  startup itself (before any real boot), from the pre-existing `-device
+  virtio-rng-pci` — confirmed for real this is unrelated to networking:
+  QEMU defaults every virtio-pci device's `romfile` property to
+  `efi-virtio.rom` regardless of device type. Root cause: `qemu-runner.yaml`
+  (ADR-012) installs with `--no-install-recommends`, which drops `ipxe-qemu`
+  — confirmed via `apt-cache depends qemu-system-arm`/`-misc` that it's a
+  Recommends, not a Depends. First guess, `qemu-system-data`, was wrong —
+  confirmed for real via `dpkg -L` inside the actual container that it ships
+  only BIOS/VGA-BIOS blobs and sample configs, no ROM files at all; the real
+  ROMs (`efi-virtio.rom`, `pxe-virtio.rom`, etc.) live under
+  `/usr/lib/ipxe/qemu/`, owned by `ipxe-qemu`, confirmed via `dpkg -L
+  ipxe-qemu` after installing it. Fixed by adding `ipxe-qemu` explicitly to
+  `qemu-runner.yaml`'s provision list (same pattern as the existing
+  `--no-install-recommends` + explicit-package-list approach, not dropping
+  the flag wholesale). Re-verified `emblab run qemu-arm64-coreboot-barebox`
+  end to end for real after the fix: no romfile error, full real boot log
+  again through bootblock -> romstage -> ramstage -> BL31 handoff ->
+  `barebox 2026.08.0-... Board: ARM QEMU virt64`, same as the original
+  confirmed boot above.
+  Also hit and worked around real udocker flakiness while diagnosing this
+  (not an emblab bug): manually re-running bare `udocker` CLI commands
+  against `workspace/udocker` with a **relative** `UDOCKER_DIR` produced
+  spurious `Error: invalid container json metadata` / "not found" failures
+  that a real container.json existing on disk contradicted — switching to
+  an **absolute** `UDOCKER_DIR` path made the exact same commands work
+  correctly. `containers.py`'s own `_udocker_env()` already always builds
+  an absolute path (`Path(workspace) / "udocker"` off an absolute
+  `workspace`), so this was a manual-diagnosis-only pitfall, not a real
+  driver bug — worth remembering if a future session probes `udocker`
+  directly by hand from a shell. Separately (also manual diagnosis, not a
+  real bug): re-running `udocker pull` on the floating `debian:bookworm-slim`
+  tag mid-session fetched a newer image published as an OCI-schema manifest
+  that this project's pinned udocker 1.3.17 couldn't turn into a container;
+  recovered by deleting the bad container + name symlink and recreating —
+  `containers.py`'s own flow never does a redundant re-pull once a
+  container already exists, so this also isn't reachable through normal
+  `emblab` usage, only through manual `udocker pull`-ing the same tag again
+  by hand.
 ## In progress
 Nothing in flight.
 
