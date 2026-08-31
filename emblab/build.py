@@ -80,7 +80,9 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
                 log(f"[{component_name}] setup complete")
 
         marker_path = state.component_marker_path(workspace, target.name, component_name)
-        current_hash = state.component_hash(component, resolved_vars, entry.builddeps, merged_patches)
+        current_hash = state.component_hash(
+            component, resolved_vars, entry.builddeps, merged_patches, artifacts_by_component
+        )
         have_artifacts = state.artifacts_exist(workspace, target.name, component_name, component.artifacts)
 
         if not force and have_artifacts and state.marker_matches(marker_path, current_hash):
