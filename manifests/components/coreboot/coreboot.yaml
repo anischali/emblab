@@ -91,9 +91,33 @@ build:
     # conditionally-populated-var trick as edk2.yaml's fv_boot_app_flag/
     # tf-a.yaml's bl32_flags: a target that wants a payload embedded sets
     # this to one or more real Kconfig lines (e.g. CONFIG_PAYLOAD_ELF=y
-    # and CONFIG_PAYLOAD_FILE="..."), appended onto .config only when
-    # non-empty — Kbuild's own oldconfig/olddefconfig machinery re-syncs
-    # everything else, same as barebox.yaml's extra_conf comment describes.
+    # and CONFIG_PAYLOAD_FILE="..."), appended onto .config — Kbuild's own
+    # oldconfig/olddefconfig machinery re-syncs everything else, same as
+    # barebox.yaml's extra_conf comment describes. Two real, confirmed
+    # shell-quoting bugs already hit here, both from a real value
+    # containing its own literal `"` (CONFIG_PAYLOAD_FILE="...",
+    # CONFIG_PAYLOAD_OPTIONS="..."): (1) `if [ -n "${vars.payload_conf}"
+    # ]` — the embedded `"` closed the test's own quotes early, and once a
+    # value also had an unquoted space-separated token after that point
+    # (CONFIG_PAYLOAD_OPTIONS's `-l ...` cbfstool flags), `[` read `-l` as
+    # an operator and errored ("unexpected operator") — `set -e` does NOT
+    # abort on a failed `if` condition, so this failed *silently*, just
+    # never running the printf, producing a payload-less coreboot.rom with
+    # no visible build error. (2) Removing the `if` guard and double-
+    # quoting the printf argument instead (`printf '%s\n'
+    # "${vars.payload_conf}"`) hit the exact same embedded-`"` problem one
+    # level down: the value split into multiple unquoted shell words, and
+    # printf's format recycles across extra arguments — confirmed for
+    # real, wrote each word onto its own line with quotes/spaces stripped,
+    # corrupting `.config` badly enough Make itself errored ("missing
+    # separator") parsing it. build.command now single-quotes the printf
+    # argument instead (`printf '%s\n' '${vars.payload_conf}'`) — safe
+    # specifically because no real payload_conf value ever contains a
+    # literal `'`, only `"`; single quotes have no escape mechanism at all
+    # in POSIX shell, so this only works because that stays true. The
+    # printf always runs unconditionally even when this is "" — an empty
+    # value just appends a blank line, which Kconfig ignores, so no `if`
+    # guard is needed at all.
     payload_conf: ""
   # XGCCPATH points make at coreboot-sdk's prebuilt toolchain instead of
   # coreboot's own util/crossgcc/xgcc (which nothing here ever populates
@@ -138,10 +162,50 @@ build:
   # clang — same image, confirmed `-std=gnu23` compiles clean with it same
   # as the aarch64-elf-gcc check above), so point HOSTCC/HOSTCXX there
   # instead of trying to find/build a newer host gcc.
+  #
+  # `rm -rf build` — real, confirmed staleness bug: when a Kconfig symbol
+  # flips from unset to y between one build attempt and the next against a
+  # not-yet-recloned source tree (e.g. payload_conf changing which
+  # CONFIG_PAYLOAD_* choice member is selected), coreboot's build can leave
+  # a previously-linked build/ramstage/.../ramstage.a on disk that Make
+  # treats as already up to date, silently omitting object files that only
+  # became relevant under the new config (real repro: with an already-
+  # populated build/ dir, CONFIG_PAYLOAD_FIT_SUPPORT flipped on but
+  # build/ramstage/lib/ramstage.a and build/ramstage/arch/arm64/ramstage.a
+  # both kept an older prerequisite list missing fit.o/fit_payload.o/
+  # fit_payload_arch, producing real linker "undefined reference" failures
+  # that only went away after manually deleting those two .a files and
+  # relinking). Forcing a clean build/ on every real rebuild (component
+  # marker/hash already skips this entirely when nothing changed) sidesteps
+  # the whole class of staleness rather than chasing which specific
+  # archives it hits next. NOT sufficient on its own, though — see the
+  # `olddefconfig` note below for the real, still-reproduced-after-this-fix
+  # failure that led to adding it too.
+  #
+  # A separate `make olddefconfig` between the printf and the parallel
+  # build — real, confirmed bug, found even with a guaranteed-clean build/
+  # (the fix above): coreboot's own Makefile has config.h's rule run
+  # `$(MAKE) olddefconfig` then `$(MAKE) syncconfig` as two nested
+  # recursive sub-makes, triggered lazily the first time something in the
+  # main `-j${JOBS}` invocation needs config.h. Confirmed for real with a
+  # freshly wiped build/: CONFIG_PAYLOAD_FIT_SUPPORT still ended up y in
+  # the final .config, but fit.c/fit_payload.c (both
+  # ramstage-$(CONFIG_PAYLOAD_FIT_SUPPORT)-gated) never appeared anywhere
+  # in the real build log's CC lines for ramstage/lib or
+  # ramstage/arch/arm64 — the object-list Makefile.mk files that decide
+  # what to compile get parsed against config state from earlier in that
+  # same parallel invocation, before the nested sub-make dance has fully
+  # settled. Running `olddefconfig` ourselves, single-threaded, as its own
+  # command between the printf and the `-j${JOBS}` build forces config.h/
+  # auto.conf to be fully resolved and stable on disk before any parallel
+  # compilation starts, so the real build never has to do that regeneration
+  # itself mid-flight.
   command: >-
     set -e;
+    rm -rf build;
     make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ HOSTCC=/opt/xgcc/bin/clang HOSTCXX=/opt/xgcc/bin/clang++ KBUILD_DEFCONFIG=${vars.defconfig} defconfig;
-    if [ -n "${vars.payload_conf}" ]; then printf '%s\n' "${vars.payload_conf}" >> .config; fi;
+    printf '%s\n' '${vars.payload_conf}' >> .config;
+    make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ HOSTCC=/opt/xgcc/bin/clang HOSTCXX=/opt/xgcc/bin/clang++ olddefconfig;
     make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ HOSTCC=/opt/xgcc/bin/clang HOSTCXX=/opt/xgcc/bin/clang++ -j${env.JOBS}
 artifacts:
   rom: build/coreboot.rom
