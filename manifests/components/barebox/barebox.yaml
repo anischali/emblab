@@ -14,7 +14,7 @@ description: >
   Kconfig option (riscv64's CONFIG_SOC_VIRT selects it too, its own help
   text says so verbatim: "Generates an image that can be booted by QEMU").
 source:
-  git: https://github.com/barebox/barebox
+  git: https://github.com/barebox/barebox.git
   ref: master
   path: barebox
 build:
