@@ -18,6 +18,14 @@ source:
   ref: master
   path: barebox
 build:
+  # generic-fit.cfg is barebox's own documented mechanism for coreboot
+  # compatibility (arch/Kconfig's BOARD_GENERIC_FIT help text says so
+  # verbatim: "bootable from coreboot, barebox, or any other bootloader
+  # capable of booting a Linux kernel out of FIT images") — always copied
+  # in via build.files (ADR-005/007), only merged when a target's
+  # extra_conf opts in (see qemu-arm64-coreboot-barebox).
+  files:
+    - generic-fit.cfg
   # vars.arch has no default here — arch is a target concern, not a
   # component one (see ADR-009); every target's stack entry for barebox
   # must set it. $CROSS_COMPILE (unbraced) is a real shell env var, set by
@@ -53,3 +61,12 @@ artifacts:
   # artifact with copytree instead of copy2); a target picks a file out of
   # it with e.g. ${barebox.images}/barebox-dt-2nd.img.
   images: images/
+  # The top-level Kbuild output, before any arch-specific post-processing
+  # turns it into a flat images/barebox-*.img — confirmed for real (`file`
+  # on a real build's output): "ELF 64-bit LSB pie executable, ARM aarch64
+  # ... static-pie linked", i.e. a genuine ET_DYN ELF, unlike
+  # images/barebox-dt-2nd.img (raw machine code, no ELF header at all).
+  # Needed by e.g. qemu-arm64-coreboot-barebox's CONFIG_PAYLOAD_ELF, which
+  # parses its CONFIG_PAYLOAD_FILE as ELF and misreads a flat binary as one
+  # (real, confirmed failure: "SELF segment doesn't target RAM").
+  elf: barebox
