@@ -75,7 +75,7 @@ stack:
     builddeps:
       - python3-libfdt
     vars:
-      defconfig: efi_v8_defconfig
+      defconfig: multi_v8_defconfig
       arch: arm64
       # Merges in generic-fit.cfg (see barebox.yaml's build.files) to turn
       # on BOARD_GENERIC_FIT, which is off by default — a plain bool, not
