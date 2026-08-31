@@ -8,8 +8,8 @@
 # confirmed against a real provisioned container: without this, `shopt
 # progcomp` was already on (bash's own default) but no completion function
 # was actually registered for e.g. apt-get. This file does that sourcing
-# itself, from a fixed path (bind-mounted onto /usr/local/bin by every
-# containers.run()/shell() call) instead of depending on $HOME.
+# itself, from a fixed path (bind-mounted onto HELPERS_MOUNT, on PATH via
+# every containers.run()/shell() call) instead of depending on $HOME.
 [ -f /etc/bash.bashrc ] && . /etc/bash.bashrc
 
 if ! shopt -oq posix; then

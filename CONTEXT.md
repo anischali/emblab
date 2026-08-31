@@ -641,6 +641,39 @@ hand-editing it under `workspace/src/<path>`.
   container already exists, so this also isn't reachable through normal
   `emblab` usage, only through manual `udocker pull`-ing the same tag again
   by hand.
+- 2026-08-31: **Real `helpers/` directory pollution from `emblab build`,
+  root-caused and fixed in the driver**: user-reported after compiling
+  `edk2` — ~25 untracked files (`stuart_build`, `pygmentize`,
+  `cffi-gen-src`, `vba_extract.py`, ...) showed up under the repo's
+  checked-in `helpers/` directory, none of them anything this project
+  added. Root cause: `containers.py`'s `HELPERS_MOUNT` bind-mounted the
+  repo's `helpers/` read-write onto `/usr/local/bin` — Debian's own
+  default install target for global (non-venv) `pip`/`npm`/etc., chosen
+  upstream specifically to avoid colliding with dpkg-owned `/usr/bin`.
+  `edk2.yaml`'s real `build.command` runs `pip3 install
+  --break-system-packages -r pip-requirements.txt` (edk2-pytool-extensions
+  and its dependency tree) with no venv/`--target`, so pip's own
+  console-script shims landed exactly on that bind mount and were
+  physically written into the host checkout. Confirmed real and reachable
+  by any component, not edk2-specific — moved `HELPERS_MOUNT` to a
+  dedicated `/opt/emblab-helpers` that nothing else defaults to, and
+  changed `run()`/`shell()` to prepend it onto PATH via a `sh -c 'export
+  PATH="$HELPERS_MOUNT:$PATH"; exec "$@"'` wrapper (preserves exit
+  codes/signals/TTY — confirmed for real against both a one-shot `run()`
+  command and an interactive `--rcfile emblab-shell.bashrc` shell) instead
+  of relying on the mount coincidentally sharing a path already on PATH.
+  Verified for real against the actual `gnu-aarch64` container: a
+  `pip3 install --force-reinstall cffi` now writes `cffi-gen-src` into the
+  container's own (no-longer-host-mounted) `/usr/local/bin`, found via the
+  base image's already-present default PATH, while `which fitkeys-ctl`/
+  `tsa-stamp` resolve from the new `/opt/emblab-helpers` — host `helpers/`
+  stays untouched either way. 79/79 offline tests pass unchanged (no test
+  patches `containers.py`'s own argv construction, only the public
+  `containers.run(command=...)` interface, which didn't change). ADR-013
+  updated with a dated note — its own Consequences section had flagged
+  this exact hardcoded-path fragility in advance ("if that mount point
+  ever moves, `emblab-shell.bashrc`'s hardcoded path needs to move with
+  it").
 ## In progress
 Nothing in flight.
 

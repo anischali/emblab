@@ -41,7 +41,8 @@ udocker's unprivileged execution.
   unprivileged-execution finding entirely by borrowing the host's own
   passwd/group entry instead of creating one); `bash`, not `sh`; and an
   explicit `--rcfile helpers/emblab-shell.bashrc` (bind-mounted the same
-  way `fitkeys-ctl`/`tsa-stamp` already are onto `/usr/local/bin`), needed
+  way `fitkeys-ctl`/`tsa-stamp` already are onto `HELPERS_MOUNT`, see the
+  2026-08-31 update below), needed
   because the borrowed host user has no real `$HOME` inside the
   container, so Debian's own bash-completion-sourcing block — which lives
   in `~/.bashrc` (from `/etc/skel/.bashrc`), not the system-wide
@@ -69,11 +70,29 @@ paths) — an intentional trade for a safer default. Nothing in the actual
 as before.
 
 The rcfile depends on `helpers/` staying bind-mounted onto
-`/usr/local/bin` for every `shell()` call, same as `run()` already
-requires for `fitkeys-ctl`/`tsa-stamp` — if that mount point ever moves,
-`emblab-shell.bashrc`'s hardcoded path needs to move with it.
+`HELPERS_MOUNT` (see the 2026-08-31 update below) for every `shell()`
+call, same as `run()` already requires for `fitkeys-ctl`/`tsa-stamp` — if
+that mount point ever moves, `emblab-shell.bashrc`'s hardcoded path needs
+to move with it (already happened once, see below).
 
 This changed `image_hash` for all four images (new `bash-completion` in
 `provision:`), so already-provisioned real containers re-provision
 (apt-get is idempotent) the next time anything calls `ensure_image` on
 them — a one-time re-run, not a behavior change.
+
+**2026-08-31 update**: `HELPERS_MOUNT` moved from `/usr/local/bin` to
+`/opt/emblab-helpers` (`containers.py`), with `run()`/`shell()` now
+prepending it onto PATH via a `sh -c 'export PATH=...; exec "$@"'`
+wrapper instead of relying on the bind mount coinciding with a path
+that's already on PATH. Real, confirmed reason: `/usr/local/bin` is
+Debian's own default global (non-venv) pip/npm/etc. install target,
+specifically so it doesn't collide with dpkg-owned `/usr/bin` — bind-
+mounting the repo's `helpers/` there meant `edk2.yaml`'s `pip3 install
+--break-system-packages -r pip-requirements.txt` (a real build.command)
+wrote ~25 console-script shims straight into the host checkout on every
+edk2 build. Confirmed for real this doesn't break anything downstream:
+pip's own tools (e.g. `stuart_build`) still land wherever the base
+image's default PATH already looks (`/usr/local/bin` is still on it,
+just no longer bind-mounted from the host), and `emblab-shell.bashrc`'s
+own bash-completion sourcing still works unchanged, confirmed against a
+real `gnu-aarch64` container post-move.

@@ -15,12 +15,18 @@ from . import state
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # Shared helper scripts (fitkeys-ctl, tsa-stamp, ...) usable by name
 # from any component's build.command and from `emblab shell` — bind-mounted
-# onto /usr/local/bin (ahead of /usr/bin on Debian's default PATH, and
-# already on every base image's PATH) rather than copied per-component, so
-# adding a script here makes it available everywhere with no manifest
-# changes and no per-component files: entry.
+# read-write and put ahead of the rest of PATH (see _with_helpers_path)
+# rather than copied per-component, so adding a script here makes it
+# available everywhere with no manifest changes and no per-component files:
+# entry. NOT /usr/local/bin: that's a live install target (pip/npm/etc. on
+# Debian default their global, non-venv script dir there specifically to
+# avoid clashing with dpkg-owned /usr/bin) — mounting the repo's own
+# helpers/ there let edk2's `pip3 install --break-system-packages -r
+# pip-requirements.txt` (a real, confirmed build.command, see edk2.yaml)
+# write its ~25 console-script shims straight into the host checkout.
+# A dedicated path no installer defaults to avoids that collision entirely.
 HELPERS_DIR = REPO_ROOT / "helpers"
-HELPERS_MOUNT = "/usr/local/bin"
+HELPERS_MOUNT = "/opt/emblab-helpers"
 
 
 def _udocker_env(workspace):
@@ -31,6 +37,15 @@ def _udocker_env(workspace):
 
 def _udocker(args, workspace, **kwargs):
     return subprocess.run(["udocker", *args], env=_udocker_env(workspace), **kwargs)
+
+
+def _with_helpers_path(command):
+    """Prepend HELPERS_MOUNT onto PATH for `command`, without hardcoding the
+    rest of a base image's PATH (varies per image, e.g. coreboot-sdk's own
+    /opt/xgcc bin dirs). `exec "$@"` replaces this shell rather than
+    spawning a child, so exit codes/signals/interactive TTYs (see shell())
+    pass through unchanged."""
+    return ["sh", "-c", f'export PATH="{HELPERS_MOUNT}:$PATH"; exec "$@"', "emblab-helpers-path", *command]
 
 
 def container_name(image):
@@ -119,7 +134,7 @@ def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, c
         args.append(f"--env={key}={value}")
     args.append(f"--workdir={workdir}")
     args.append(container_name(image))
-    args.extend(command)
+    args.extend(_with_helpers_path(command))
     log(f"[{image.name}] run: {' '.join(command)}")
     return _udocker(args, workspace, check=check)
 
@@ -160,6 +175,6 @@ def shell(image, workspace, *, workdir="/", bind_mounts=(), log=print):
         args.append(f"--volume={host_path}:{container_path}")
     args.append(f"--workdir={workdir}")
     args.append(container_name(image))
-    args.extend(["bash", "--rcfile", f"{HELPERS_MOUNT}/emblab-shell.bashrc", "-i"])
+    args.extend(_with_helpers_path(["bash", "--rcfile", f"{HELPERS_MOUNT}/emblab-shell.bashrc", "-i"]))
     log(f"[{image.name}] shell: {workdir}")
     subprocess.run(["udocker", *args], env=_udocker_env(workspace))
