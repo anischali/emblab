@@ -27,6 +27,25 @@ reapply) for as long as it's present; `mark_finished()` removes it, handing
 the tree back to normal ref/patches tracking on the *next* `ensure_source`
 call — it does not itself re-clone. `emblab modify <component>` /
 `emblab reset <component> [--reclone]` are the CLI entry points.
+
+When a floating `ref` really has moved (or `patches` changed) on an
+already-cloned component, `ensure_source` updates the existing checkout in
+place (`git fetch` + `reset --hard` + `clean -fd`, then re-run
+`_init_submodules`/`_apply_patches` on it) rather than deleting `dest` and
+cloning from zero — for a component with submodules (coreboot, edk2) this
+is the difference between "fetch the one new commit and whatever changed"
+and "re-download the entire tree and every submodule again", confirmed
+real and expensive on both. `_init_submodules`'s own `git submodule
+update` only re-fetches a submodule whose pinned commit actually changed
+between the old and new superproject commit — most don't, on a routine
+upstream advance. Only if this in-place update itself fails does
+`ensure_source` fall back to the old delete-and-clone-from-scratch path,
+same recovery-of-last-resort role `_run_submodule_update`'s own retry
+escalation already gives full re-clones (see its docstring) for real
+observed `.git/modules/` corruption. `force=True` (`emblab reset
+--reclone`) always takes the full delete-and-clone path unconditionally —
+its whole point is a guaranteed-pristine checkout on demand, not the fast
+path.
 """
 
 import shutil
@@ -75,26 +94,32 @@ def _reclone(dest, component):
 
 
 def _run_submodule_update(cmd, dest, component, *, log):
-    """`git submodule update --init --recursive --depth 1` with nested
-    submodules-of-submodules (e.g. coreboot's arm-trusted-firmware -> its
-    own mbed-tls -> mbed-tls's own "framework") is real, reproducibly
-    flaky on this project — confirmed repeatedly against coreboot, a
-    different nested submodule failing each time ("No such file or
-    directory" for a FETCH_HEAD/shallow.lock path git should have just
-    created under .git/modules/.../modules/...), never a
-    network-reachability error. A failed attempt also leaves
-    .git/modules/<submodule> corrupted enough that git itself cascades
-    ("not a git repository", then "pathspec did not match" on the next
-    attempt against the SAME tree) — confirmed for real: a bare retry of
-    the identical command is not enough. Each retry (not the first
-    attempt) re-clones the whole component from scratch first, onto a
-    known-pristine tree, same as ensure_source's own ref-moved/
-    patches-changed re-clone path."""
+    """`git submodule update --init --recursive --depth 1` failures on this
+    project fall into two real, confirmed-distinct buckets rather than one:
+    a plain transient network blip on a single nested submodule (confirmed
+    real: edk2's brotli -> oniguruma, "TLS connect error" fetching one leaf
+    dependency while every other submodule had already fetched fine) that a
+    bare retry of the identical command against the SAME tree resolves
+    outright, re-fetching only that one submodule; and real
+    `.git/modules/<submodule>` corruption from a failed nested
+    submodule-of-a-submodule fetch (confirmed real against coreboot's
+    arm-trusted-firmware -> its own mbed-tls -> mbed-tls's own "framework"
+    — a different nested submodule failing each time, "No such file or
+    directory" for a path git should have just created), which instead
+    cascades into "not a git repository" on a bare retry and genuinely
+    needs the whole component re-cloned from scratch first. Escalate in
+    that order — cheap in-place retry before ever re-cloning — so the
+    common transient-network case (re-)fetches only the one submodule that
+    actually failed, not the whole tree and every already-succeeded
+    submodule; full re-clone is reserved for the final attempt, as the
+    same recovery-of-last-resort it already was."""
     last_error = None
     for attempt in range(1, SUBMODULE_INIT_ATTEMPTS + 1):
-        if attempt > 1:
-            log(f"[{component.name}] re-cloning before retry {attempt}/{SUBMODULE_INIT_ATTEMPTS}")
+        if attempt == SUBMODULE_INIT_ATTEMPTS:
+            log(f"[{component.name}] re-cloning before final retry {attempt}/{SUBMODULE_INIT_ATTEMPTS}")
             _reclone(dest, component)
+        elif attempt > 1:
+            log(f"[{component.name}] retrying git submodule update in place ({attempt}/{SUBMODULE_INIT_ATTEMPTS})")
         try:
             subprocess.run(cmd, cwd=dest, check=True)
             return
@@ -127,6 +152,33 @@ def _apply_patches(dest, component, patches, *, log=print):
         patch_path = manifests.component_file_path(component.name, filename)
         log(f"[{component.name}] applying patch {filename}")
         subprocess.run(["git", "apply", str(patch_path)], cwd=dest, check=True)
+
+
+def _try_update_in_place(dest, component, patches, *, log):
+    """Move an already-cloned `dest` to component.source.ref without
+    deleting it first: `git fetch` the new tip, `reset --hard` onto it
+    (discards the previously-applied, never-committed patch diffs — same
+    "patches only ever land on a pristine tree" invariant `ensure_source`
+    already relies on for a fresh clone), `clean -fd` any patch-added new
+    files (plain `-fd`, not `-ffd`, deliberately leaves already-initialized
+    submodule directories alone — git's own default), then re-run
+    `_init_submodules`/`_apply_patches` on the now-pristine tree. Returns
+    True on success; the caller falls back to a full delete-and-clone on
+    any failure here, exactly the same recovery role a full re-clone
+    already plays inside `_run_submodule_update`'s own retry escalation."""
+    try:
+        subprocess.run(
+            ["git", "fetch", "--depth", "1", "origin", component.source.ref],
+            cwd=dest, check=True,
+        )
+        subprocess.run(["git", "reset", "--hard", "FETCH_HEAD"], cwd=dest, check=True)
+        subprocess.run(["git", "clean", "-fd"], cwd=dest, check=True)
+        _init_submodules(dest, component, log=log)
+        _apply_patches(dest, component, patches, log=log)
+        return True
+    except subprocess.CalledProcessError as exc:
+        log(f"[{component.name}] in-place update failed ({exc}), falling back to full re-clone")
+        return False
 
 
 def ensure_source(workspace, component, patches, *, log=print, force=False):
@@ -180,13 +232,25 @@ def ensure_source(workspace, component, patches, *, log=print, force=False):
         if not force and not ref_moved and not patches_changed:
             log(f"[{component.name}] source up to date at {dest}")
             return dest
+
+        if not force:
+            if ref_moved:
+                log(f"[{component.name}] ref '{component.source.ref}' moved upstream, updating in place")
+            else:
+                log(f"[{component.name}] patches changed, updating in place to reapply cleanly")
+            if _try_update_in_place(dest, component, patches, log=log):
+                state.write_marker(patches_marker, current_patches_hash)
+                return dest
+
         if force:
             log(f"[{component.name}] re-clone forced")
-        elif ref_moved:
-            log(f"[{component.name}] ref '{component.source.ref}' moved upstream, re-cloning")
-        else:
-            log(f"[{component.name}] patches changed, re-cloning to reapply cleanly")
-        shutil.rmtree(dest)
+        # dest may already be gone here: a failed in-place update can go
+        # through _run_submodule_update's own last-resort _reclone (rmtree
+        # + clone), and if THAT clone also fails, dest is left deleted —
+        # confirmed for real, not speculative (a concurrent `emblab build`
+        # on the same workspace hit exactly this).
+        if dest.exists():
+            shutil.rmtree(dest)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(

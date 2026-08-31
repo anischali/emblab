@@ -3,7 +3,9 @@ submodule init, patch application) — all git calls are mocked, no real
 network/filesystem git operations happen.
 """
 
+import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 from unittest.mock import patch
@@ -73,13 +75,12 @@ def test_ensure_source_skips_submodules_by_default(tmp_path):
     assert not any(c[:2] == ["git", "submodule"] for c in calls)
 
 
-def test_init_submodules_retries_with_a_fresh_reclone_on_failure(tmp_path):
-    """Real, reproducible flakiness in `git submodule update --init
-    --recursive` (confirmed against coreboot: a different nested submodule
-    fails each time, and a failed attempt leaves .git/modules/<submodule>
-    corrupted enough that a bare retry of the same command fails
-    differently again) means a retry needs a fresh re-clone first, not
-    just the same command run again."""
+def test_init_submodules_retries_in_place_before_ever_reclone(tmp_path):
+    """Real, confirmed transient flakiness (edk2's brotli -> oniguruma: a
+    plain TLS connect error fetching one leaf submodule, every other
+    submodule already fine) resolves on a bare retry of the identical
+    command — no re-clone needed, so the first retry must not throw away
+    everything a partially-successful submodule update already fetched."""
     component = _component(submodules=True)
     calls = []
     submodule_attempts = 0
@@ -101,10 +102,41 @@ def test_init_submodules_retries_with_a_fresh_reclone_on_failure(tmp_path):
         "clone" if c[1] == "clone" else "submodule" if c[:2] == ["git", "submodule"] else "other"
         for c in calls
     ]
-    assert kinds.count("clone") == 2, "a failed attempt must re-clone before retrying"
+    assert kinds.count("clone") == 1, "a transient failure must retry in place, not re-clone"
     assert kinds.count("submodule") == 2
-    # clone, submodule (fails), reclone, submodule (retry, succeeds) — in that order
-    assert kinds == ["clone", "submodule", "clone", "submodule"]
+    # clone, submodule (fails), submodule (bare retry, succeeds) — no re-clone in between
+    assert kinds == ["clone", "submodule", "submodule"]
+
+
+def test_init_submodules_reclones_only_as_the_final_retry(tmp_path):
+    """Real `.git/modules/<submodule>` corruption (confirmed against
+    coreboot: a different nested submodule fails each time, and a failed
+    attempt leaves state corrupted enough that a bare retry fails
+    differently again) needs a fresh re-clone eventually — but only once
+    the cheap in-place retry has already been tried and failed too."""
+    component = _component(submodules=True)
+    calls = []
+    submodule_attempts = 0
+
+    def fake_run(args, **kwargs):
+        nonlocal submodule_attempts
+        calls.append(args)
+        if args[:2] == ["git", "submodule"]:
+            submodule_attempts += 1
+            if submodule_attempts < 3:
+                raise subprocess.CalledProcessError(1, args)
+        return type("Result", (), {"returncode": 0, "stdout": ""})()
+
+    with patch("emblab.sources.subprocess.run", side_effect=fake_run), \
+         patch("emblab.sources.shutil.rmtree"):
+        sources.ensure_source(tmp_path, component, component.build.patches)
+
+    kinds = [
+        "clone" if c[1] == "clone" else "submodule" if c[:2] == ["git", "submodule"] else "other"
+        for c in calls
+    ]
+    # clone, submodule (fails), submodule (bare retry, fails), reclone, submodule (succeeds)
+    assert kinds == ["clone", "submodule", "submodule", "clone", "submodule"]
 
 
 def test_ensure_source_initializes_submodules_before_applying_patches(tmp_path, monkeypatch):
@@ -256,6 +288,103 @@ def test_mark_finished_removes_marker_and_resumes_normal_tracking(tmp_path):
     # check itself ran again (unlike the marked case above).
     assert ["git", "ls-remote", component.source.git, component.source.ref] in calls
     assert not any(c[1] == "clone" for c in calls)
+
+
+def test_ensure_source_updates_in_place_when_ref_moved(tmp_path):
+    """A floating ref moving upstream on an already-cloned component must
+    fetch+reset+clean the existing tree in place, not delete it and clone
+    from zero — the whole point for a component with submodules
+    (coreboot/edk2), where a from-scratch clone re-downloads every
+    submodule even when most of their pinned commits haven't changed."""
+    component = _component(submodules=True)
+    dest = _existing_clone(tmp_path, component)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if args[:2] == ["git", "rev-parse"]:
+            return type("Result", (), {"returncode": 0, "stdout": "oldsha\n"})()
+        if args[:2] == ["git", "ls-remote"]:
+            return type("Result", (), {"returncode": 0, "stdout": "newsha\trefs/heads/main\n"})()
+        return type("Result", (), {"returncode": 0, "stdout": ""})()
+
+    with patch("emblab.sources.subprocess.run", side_effect=fake_run), \
+         patch("emblab.sources.shutil.rmtree") as rmtree:
+        result = sources.ensure_source(tmp_path, component, component.build.patches)
+
+    assert result == dest
+    rmtree.assert_not_called()
+    assert not any(c[1] == "clone" for c in calls), "must not delete-and-reclone when the in-place update succeeds"
+    assert ["git", "fetch", "--depth", "1", "origin", component.source.ref] in calls
+    assert ["git", "reset", "--hard", "FETCH_HEAD"] in calls
+    assert ["git", "clean", "-fd"] in calls
+    assert calls.index(["git", "reset", "--hard", "FETCH_HEAD"]) < calls.index(
+        next(c for c in calls if c[:2] == ["git", "submodule"])
+    ), "submodules must be re-synced onto the new commit, not the stale one"
+
+
+def test_ensure_source_falls_back_to_full_reclone_when_in_place_update_fails(tmp_path):
+    """If the in-place fetch/reset/clean/submodule-update sequence itself
+    fails (e.g. a real git error, not just a transient submodule blip
+    already handled by _run_submodule_update's own retries), ensure_source
+    must still fall back to the old, guaranteed-to-work delete-and-clone
+    path rather than leaving a half-updated tree behind."""
+    component = _component()
+    dest = _existing_clone(tmp_path, component)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if args[:2] == ["git", "rev-parse"]:
+            return type("Result", (), {"returncode": 0, "stdout": "oldsha\n"})()
+        if args[:2] == ["git", "ls-remote"]:
+            return type("Result", (), {"returncode": 0, "stdout": "newsha\trefs/heads/main\n"})()
+        if args[:2] == ["git", "fetch"]:
+            raise subprocess.CalledProcessError(1, args)
+        return type("Result", (), {"returncode": 0, "stdout": ""})()
+
+    with patch("emblab.sources.subprocess.run", side_effect=fake_run), \
+         patch("emblab.sources.shutil.rmtree") as rmtree:
+        result = sources.ensure_source(tmp_path, component, component.build.patches)
+
+    assert result == dest
+    rmtree.assert_called_once_with(dest)
+    assert any(c[1] == "clone" for c in calls), "must fall back to a full re-clone after the in-place attempt fails"
+
+
+def test_ensure_source_recovers_when_dest_already_gone_after_failed_in_place_update(tmp_path):
+    """Real, confirmed crash (hit against an actual edk2 checkout): the
+    in-place update's own last-resort re-clone (inside
+    _run_submodule_update's escalation) can delete `dest` and then have
+    its own `git clone` step also fail — leaving `dest` genuinely missing
+    from disk, not just "update failed". ensure_source's fallback must not
+    then crash trying to rmtree an already-missing directory."""
+    component = _component()
+    dest = _existing_clone(tmp_path, component)
+
+    def fake_update_in_place(dest_arg, component_arg, patches_arg, *, log):
+        shutil.rmtree(dest_arg)  # simulate the nested _reclone's own rmtree
+        return False
+
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if args[:2] == ["git", "rev-parse"]:
+            return type("Result", (), {"returncode": 0, "stdout": "oldsha\n"})()
+        if args[:2] == ["git", "ls-remote"]:
+            return type("Result", (), {"returncode": 0, "stdout": "newsha\trefs/heads/main\n"})()
+        if args[1] == "clone":
+            Path(args[-1]).mkdir(parents=True)
+            (Path(args[-1]) / ".git").mkdir()
+        return type("Result", (), {"returncode": 0, "stdout": ""})()
+
+    with patch("emblab.sources.subprocess.run", side_effect=fake_run), \
+         patch("emblab.sources._try_update_in_place", side_effect=fake_update_in_place):
+        result = sources.ensure_source(tmp_path, component, component.build.patches)
+
+    assert result == dest
+    assert (dest / ".git").exists()  # a fresh clone completed, no crash
 
 
 def test_mark_finished_is_a_noop_when_nothing_was_marked(tmp_path):
