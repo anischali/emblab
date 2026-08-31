@@ -674,6 +674,55 @@ hand-editing it under `workspace/src/<path>`.
   this exact hardcoded-path fragility in advance ("if that mount point
   ever moves, `emblab-shell.bashrc`'s hardcoded path needs to move with
   it").
+- 2026-08-31: **`ensure_source` updates submodule-heavy components in
+  place instead of re-cloning from scratch, user-reported**: coreboot and
+  edk2's floating `ref: master` moving upstream (or a target's patches
+  changing) triggered a full `shutil.rmtree` + fresh clone + full
+  `git submodule update --init --recursive` on every build — for edk2
+  specifically (a dozen+ submodules, several vendoring their own further
+  submodules: CryptoPkg's OpenSSL pulls in cloudflare-quiche, krb5,
+  oqs-provider, wycheproof, ...) this meant re-downloading nearly
+  everything, almost every time. Fixed by trying `git fetch` + `reset
+  --hard FETCH_HEAD` + `clean -fd` in place first (new
+  `sources._try_update_in_place`), falling back to the old
+  delete-and-clone only if that fails — `git submodule update` on an
+  already-initialized tree only re-fetches a submodule whose pinned
+  commit actually changed, which most aren't on a routine upstream
+  advance. `_run_submodule_update`'s own retry escalation got the same
+  treatment: a transient network blip on one submodule (confirmed real,
+  live: edk2's brotli -> oniguruma, plain TLS connect error) now gets a
+  bare in-place retry before ever re-cloning; full re-clone is reserved
+  for the final attempt only, same recovery-of-last-resort role it always
+  had for genuine `.git/modules/` corruption (coreboot's TF-A/mbed-tls
+  case). 83/83 offline tests pass (4 new/rewritten in `test_sources.py`).
+  Verified for real against the actual `workspace/src/edk2` checkout
+  (already real, already messy from the user's own concurrent build
+  attempts): a genuine `ensure_source` in-place update re-fetched only
+  `CryptoPkg/Library/OpensslLib/openssl` and
+  `CryptoPkg/Library/MbedTlsLib/mbedtls/framework` (their pinned upstream
+  commits had genuinely moved, cascading into openssl's own dozen nested
+  submodules) while leaving `brotli`/`oniguruma`/`libfdt`/`mipisyst`/
+  `jansson`/`libspdm`/`TPM`/`cmocka`/`googletest`/`subhook` — all
+  unchanged — completely untouched, no network calls at all for those.
+  Also caught and fixed a real crash surfaced by that same testing: this
+  session's own diagnostic `emblab fetch edk2` collided with the user's
+  own concurrent `emblab build` on the same `workspace/` (the
+  already-tracked no-locking issue, see Next item 15) and hit
+  `_run_submodule_update`'s final-retry `_reclone`, whose own `git clone`
+  then ALSO failed (mid-collision) — leaving `dest` genuinely deleted from
+  disk; `ensure_source`'s outer fallback then crashed trying to `rmtree`
+  an already-missing directory. Now guards with `dest.exists()` first.
+  edk2's real submodule graph remains genuinely flaky end-to-end across a
+  from-scratch clone specifically (many independent, unrelated upstream
+  hosts — github.com/{tianocore,cloudflare,google,kkos,...} — any one
+  network hiccup fails the whole `--recursive` command) — confirmed real:
+  a first-time `emblab fetch edk2` still failed after all 3 attempts
+  (including the final re-clone) this session. That's an existing,
+  unchanged characteristic of `_init_submodules`'s single all-or-nothing
+  command, not something this fix introduced or fully solves — a future
+  per-submodule retry loop (`git submodule foreach` with its own retry,
+  rather than one big `--recursive` invocation) would be the real fix for
+  *that*, if first-time edk2 clones keep failing in practice.
 ## In progress
 Nothing in flight.
 
