@@ -19,6 +19,19 @@ from pathlib import Path
 from . import containers, manifests, state, templating
 from .errors import BuildError
 
+# Every target here runs QEMU inside a headless qemu-runner container (see
+# module docstring / ADR-012) — none of them ever wants a real gtk/sdl
+# window. Without an explicit display backend, QEMU probes for gtk then
+# sdl (neither module is installed, see qemu-runner.yaml's provision:),
+# then falls back to a VNC server on localhost:5900, which fails DNS
+# resolution inside the container — confirmed for real. A target that
+# already picked its own display handling (`-nographic`, e.g. the
+# coreboot/riscv64 targets whose qemu-runner image has no display module
+# at all either way, or an explicit `-display` of its own) is left alone;
+# this is a driver-level default, not a per-manifest one, so a target's
+# own args: never needs to repeat it.
+_DISPLAY_OVERRIDE_FLAGS = {"-nographic", "-display"}
+
 
 def resolve_args(target, workspace):
     env = templating.default_env(workspace, target.arch)
@@ -34,10 +47,13 @@ def resolve_args(target, workspace):
             workspace, target.name, entry.component, component.artifacts
         )
 
-    return [
+    args = [
         templating.resolve_value(arg, merged_vars={}, env=env, artifacts=artifacts_by_component)
         for arg in target.qemu.args
     ]
+    if not _DISPLAY_OVERRIDE_FLAGS & set(args):
+        args = ["-display", "none", *args]
+    return args
 
 
 def run(target_name, workspace, *, log=print):

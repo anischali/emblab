@@ -723,13 +723,65 @@ hand-editing it under `workspace/src/<path>`.
   per-submodule retry loop (`git submodule foreach` with its own retry,
   rather than one big `--recursive` invocation) would be the real fix for
   *that*, if first-time edk2 clones keep failing in practice.
+- 2026-08-31: **`emblab run qemu-arm64-edk2-barebox` succeeds for real —
+  first-ever real boot of this target**, resolving the old Next item 6.
+  Two more real, distinct `qemu-runner` firmware-ROM gaps surfaced getting
+  there, same shape as the earlier `efi-virtio.rom`/`ipxe-qemu` fix: (1)
+  with no `-display`/`-nographic` given, QEMU probed for gtk then sdl
+  (neither installed) then fell back to a VNC server on `localhost:5900`,
+  which fails DNS resolution inside the container — the exact failure
+  ADR-012's coreboot-barebox target already hit and fixed with
+  `-nographic`; this time fixed as a **driver-level default** instead of
+  per-manifest, on user direction ("instead of putting the args in each
+  yaml, let it be directly in resolve args when they are global"):
+  `qemu.py`'s `resolve_args` now prepends `-display none` to any target
+  that didn't already pick its own display handling (`-nographic` or its
+  own `-display`) — confirmed for real this doesn't touch the
+  coreboot/riscv64 targets' existing `-nographic`. (2) `-device ramfb`
+  (UEFI's GOP framebuffer) defaults its romfile to `vgabios-ramfb.bin`,
+  which — confirmed for real via `qemu-system-aarch64 -L help`'s
+  compiled-in firmware search path — comes from the `seabios` package
+  (`/usr/share/seabios/`), not `qemu-system-data` (confirmed empty of it
+  via `dpkg -L`) or `ipxe-qemu`; added to `qemu-runner.yaml`. With both
+  fixed, a real boot log confirms: our own freshly-built `edk2`
+  (`QEMU_EFI.fd`) reaches its boot manager, EDK2's own
+  `QemuKernelLoaderFsDxe` mechanism loads barebox via QEMU's `-kernel`
+  fw_cfg entry (confirmed by its own trace lines: `QemuKernelStubFileOpen:
+  file opened: "kernel"`, `918528 bytes` — the same `barebox-dt-2nd.img`
+  size as every other target using this file), and barebox itself comes up
+  fully: `barebox 2026.08.0-... Board: barebox EFI payload`, with real EFI
+  variable/framebuffer-console subsystems registering. ("Image type X64
+  can't be loaded on AARCH64 UEFI system." earlier in the log is benign —
+  EDK2 correctly rejecting some unrelated PCI option ROM, not a failure.)
+  Separately, user-requested (ahead of any target needing it):
+  `qemu-system-x86` added to `qemu-runner.yaml` too, confirmed installed
+  for real (`qemu-system-x86_64`/`-i386` both present after
+  re-provisioning) — also corrects a real doc/reality gap this surfaced:
+  the 2026-08-30 Proven entry above claiming `qemu-runner` was already
+  broadened to "genuinely every Debian `qemu-system-*` split package"
+  (x86/ppc/mips/sparc) was never actually committed to
+  `qemu-runner.yaml` — `git log` on the file shows no such change; that
+  broadening apparently never made it out of a local/uncommitted edit.
+  Only `qemu-system-x86` is added now (what was actually asked for); the
+  ppc/mips/sparc claim stays unreconciled unless separately requested.
+  83/83 offline tests pass unchanged (index-based `-bios`/`-kernel` arg
+  lookups in `test_build_plan.py` are unaffected by the prepended
+  `-display none`). `qemu-arm64-uefi-barebox`, `qemu-arm64-secureboot`,
+  `qemu-arm64-secureboot-uboot`, and `qemu-arm64-edk2-fvbootdxe-barebox`
+  all share the identical `mon:stdio`-without-`-display` pattern and now
+  get the same fix automatically via the driver default — none of them
+  has actually been run since, still open, see Next.
 ## In progress
 Nothing in flight.
 
 ## Next
 1. `emblab run qemu-arm64-uefi-barebox` — confirm the real
    `barebox-dt-2nd.img` from the build above actually boots in QEMU. This
-   is the one remaining unconfirmed step for the smaller seed target.
+   is the one remaining unconfirmed step for the smaller seed target. Now
+   gets `-display none` for free from `qemu.py`'s driver default (see
+   Proven) — the VNC/DNS failure `qemu-arm64-edk2-barebox` just hit would
+   otherwise have blocked this one identically, since both share the same
+   `mon:stdio`-without-`-display` args shape.
 2. Re-attempt `emblab build qemu-arm64-secureboot` now that the `ARCH`
    env-var leak into `optee-os` is fixed AND the `CFG_WITH_DUMMY_HWRNG`
    patch is wired up (three components: optee-os, barebox, tf-a — this is
@@ -746,13 +798,10 @@ Nothing in flight.
    clone, same starting point `barebox.yaml`/`linux-kernel.yaml` began
    from; validate after `qemu-arm64-secureboot` itself is confirmed
    working, since they share `optee-os`/`tf-a`.
-6. `emblab build qemu-arm64-edk2-barebox` — the plain (non-`FvBootDxe`)
-   edk2 target. `edk2.yaml`'s build command now has a real, working build
-   behind it (see Proven — same component, same `GCC` toolchain fix and
-   `edk2_build_arch` var apply here too), but this exact target hasn't
-   been attempted for real yet; expect real wall-clock time on first build
-   (CryptoPkg's vendored OpenSSL/mbedTLS submodules are large) even though
-   `edk2`'s source is already cloned from the `fvbootdxe` build above.
+6. ~~`emblab build qemu-arm64-edk2-barebox`~~ — **RESOLVED for real,
+   2026-08-31: both build and `emblab run` succeed, see Proven** — edk2
+   chain-loads barebox via its own `QemuKernelLoaderFsDxe` fw_cfg
+   mechanism and barebox reaches `Board: barebox EFI payload` for real.
 7. `emblab run qemu-arm64-edk2-fvbootdxe-barebox` — the build now succeeds
    for real (see Proven), but confirm it actually boots `barebox` via
    `FvBootDxe` with NO `-kernel` flag present — that's the real proof
