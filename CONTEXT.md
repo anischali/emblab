@@ -525,6 +525,82 @@ hand-editing it under `workspace/src/<path>`.
   short-circuit, its priority over `force=True`, and `mark_finished`
   resuming normal tracking).
 
+- 2026-08-31: **`qemu-arm64-coreboot-barebox` payload switched from
+  `CONFIG_PAYLOAD_ELF` to `CONFIG_PAYLOAD_FIT`**, after two more real,
+  confirmed-failed boot attempts on top of the build success recorded
+  above: `CONFIG_PAYLOAD_ELF` against `images/barebox-dt-2nd.img` (real
+  runtime failure: "SELF segment doesn't target RAM" — that file is
+  barebox's own ARM64 Linux "Image"-format output, not an ELF, despite the
+  Kconfig name suggesting otherwise) and again against `${barebox.elf}`
+  (the genuine top-level ELF — still failed, it is a PIE with vaddrs
+  relative to base 0, and `CONFIG_PAYLOAD_ELF`'s SELF loader takes them at
+  face value); a third attempt via `CONFIG_PAYLOAD_FLAT_BINARY` (explicit
+  `-l`/`-e` load address) never even reached runtime — its Kconfig lives
+  inside `payloads/Kconfig`'s `if !PAYLOAD_NONE` block, and `PAYLOAD_NONE`
+  defaults to `y` on arm64, so the appended config was silently dropped by
+  `syncconfig` until `# CONFIG_PAYLOAD_NONE is not set` was added
+  explicitly. Switched to `CONFIG_PAYLOAD_FIT` instead: barebox's own
+  `arch/Kconfig` documents `BOARD_GENERIC_FIT` as producing an image
+  "bootable from coreboot, barebox, or any other bootloader capable of
+  booting a Linux kernel out of FIT images" — new
+  `manifests/components/barebox/files/generic-fit.cfg` merges it in via
+  the existing `extra_conf` mechanism, `python3-libfdt` added as a target
+  `builddeps` entry for `scripts/make_fit.py`'s `import libfdt`. Two more
+  real, confirmed bugs surfaced getting the FIT path this far: (1) coreboot
+  picks a FIT `/configurations` entry by matching
+  `CONFIG_MAINBOARD_VENDOR`,`CONFIG_MAINBOARD_PART_NUMBER` (lowercased)
+  against each bundled device tree's own `compatible` list — the
+  qemu-aarch64 mainboard's real defaults normalize to "qemu,qemu-aarch64",
+  which matches none of barebox's bundled DTs, not even QEMU's own virt
+  machine one (real compat string "linux,dummy-virt", QEMU's own
+  `hw/arm/virt.c` convention) — fixed by overriding both Kconfig strings to
+  match instead of patching either project; (2) that DT wasn't even bundled
+  in the first place while barebox stayed on its `efi_v8_defconfig`
+  default (built for UEFI, no board DTs at all) — switched this stack
+  entry to `multi_v8_defconfig` (`CONFIG_ARCH_ARM64_VIRT=y`) instead. Also
+  fixed, in `coreboot.yaml`'s `build.command`: a real shell-quoting bug
+  (`CONFIG_PAYLOAD_OPTIONS`'s value containing its own `-l`/`-e` flags
+  broke a single-quoted append the same way the `"`-quoting bugs described
+  above did) and two real Make/Kconfig staleness bugs confirmed against a
+  from-scratch container run — a previously-built `ramstage.a` can survive
+  a Kconfig symbol flipping on without picking up the newly-relevant object
+  files it should now link (fixed with `rm -rf build` before every real
+  rebuild), and even with a guaranteed-clean `build/`, coreboot's own
+  `config.h` rule runs `$(MAKE) olddefconfig` then `$(MAKE) syncconfig` as
+  nested recursive sub-makes lazily inside the main `-j$(JOBS)` invocation,
+  which can race against that same invocation's own parallel object-list
+  parsing (fixed by running `olddefconfig` ourselves, single-threaded, as
+  its own step before the parallel build). `qemu.args` also switched from
+  `-serial mon:stdio` to `-nographic` — this container's `qemu-runner`
+  image has no gtk/sdl display module, so QEMU was falling back to a VNC
+  server on `localhost:5900`, which then failed DNS resolution inside the
+  container. **`emblab run qemu-arm64-coreboot-barebox` now boots for
+  real, confirmed against an actual serial log**: bootblock -> romstage ->
+  ramstage all complete cleanly, FIT config selection picks
+  `conf-qemu-virt64.dtb` ("FIT: Choosing best match conf-qemu-virt64.dtb
+  for compat linux,dummy-virt"), BL31 (ARM Trusted Firmware) starts and
+  hands off to `0x40080000`, and barebox itself comes up: "barebox
+  2026.08.0-g42e510a258d7 ... Board: ARM QEMU virt64", with its own 9p/
+  netconsole subsystems registering — this resolves Next's old item 14
+  (its `CONFIG_PAYLOAD_ELF`-era wording is now fully superseded).
+
+  Separately, root-caused and fixed a real, general cross-component
+  staleness bug in the driver itself while chasing the above: a
+  component's `resolved_vars` only ever embeds an upstream sibling's
+  artifact *path* (e.g. `${barebox.images}/barebox-arm64.fit`), which
+  stays identical across rebuilds even when that upstream component's own
+  vars change (e.g. barebox's `defconfig`) and it rebuilds completely
+  different bytes at that same path — `state.component_hash()` hashed only
+  the path text, so a downstream component's marker looked unchanged and
+  `emblab build` silently kept embedding a stale artifact. Confirmed for
+  real: switching barebox's `defconfig` did not invalidate coreboot's
+  build marker. Fixed with a new `state.upstream_artifacts_hash()`,
+  content-hashing every artifact already collected from earlier components
+  in the stack (files and whole directories, e.g. barebox's `images`
+  artifact) and folding it into `component_hash()` alongside the existing
+  inputs. One-time cost: every component's marker hash changed shape, so
+  the next `emblab build` of any existing target does one real rebuild per
+  component even where nothing else changed. 79/79 offline tests pass.
 ## In progress
 Nothing in flight.
 
@@ -608,13 +684,13 @@ Nothing in flight.
     target) session and pressed TAB for real, or confirmed the prompt/
     `cd`-ability/general usability feels right end to end. Cheap to check
     next time any target's build environment needs poking at by hand.
-14. `emblab run qemu-arm64-coreboot-barebox` — confirm the real
+14. ~~`emblab run qemu-arm64-coreboot-barebox` — confirm the real
     `coreboot.rom` from the build above actually boots and hands off to
-    barebox for real, the same way every other target's `emblab run` has
-    already been confirmed. A real run was launched (QEMU came up,
-    serial console attached) but the actual boot log wasn't captured in
-    this session — check for a real barebox shell prompt on serial, same
-    proof bar as the other targets' Proven entries use.
+    barebox for real~~ — **RESOLVED for real, 2026-08-31: confirmed
+    against a real serial log, see Proven** (the payload also changed from
+    `CONFIG_PAYLOAD_ELF` to `CONFIG_PAYLOAD_FIT` along the way — the
+    `coreboot.rom` this item originally referred to no longer exists in
+    that form).
 15. `workspace/` has zero locking around concurrent access — confirmed a
     real, repeated source of "directory not empty"/git-corruption
     failures this session when two `emblab build` invocations (this
