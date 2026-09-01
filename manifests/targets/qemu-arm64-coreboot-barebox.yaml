@@ -22,6 +22,7 @@ stack:
       arch: arm64
       extra_conf: |
         CONFIG_BOARD_GENERIC_FIT=y
+        CONFIG_CONSOLE_ACTIVATE_ALL=y
 
   - component: coreboot
     # coreboot-sdk ships a prebuilt cross-toolchain (see coreboot.yaml) —
@@ -31,9 +32,9 @@ stack:
       extra_conf: |
         CONFIG_VENDOR_EMULATION=y
         CONFIG_BOARD_EMULATION_QEMU_AARCH64=y
+        # CONFIG_PAYLOAD_NONE is not set
         CONFIG_PAYLOAD_FIT=y
-        CONFIG_COMPRESSED_PAYLOAD_NONE=y
-        CONFIG_PAYLOAD_FILE="${barebox.images}/barebox-dt-2nd.img"
+        CONFIG_PAYLOAD_FILE="${barebox.images}/barebox-arm64.fit"
         CONFIG_MAINBOARD_VENDOR="linux"
         CONFIG_MAINBOARD_PART_NUMBER="dummy-virt"
 

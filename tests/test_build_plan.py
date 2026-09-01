@@ -175,6 +175,7 @@ def test_barebox_extra_conf_defaults_to_noop_merge():
         "make ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE efi_v8_defconfig &&"
         " if [ -n \"\" ]; then ./scripts/kconfig/merge_config.sh -m .config ; fi &&"
         " printf '%s\\n' '' >> .config &&"
+        " make ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE olddefconfig &&"
         " make ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE -j4"
     )
     assert rendered == expected

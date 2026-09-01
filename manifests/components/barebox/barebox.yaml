@@ -37,14 +37,25 @@ build:
     extra_conf_file: ""
   # Split out so `emblab shell --component` can apply just the config step
   # (see build.shell_context()) without running the actual build.
+  #
+  # olddefconfig, single-threaded, right after the printf: an extra_conf
+  # line that sets one member of a Kconfig *choice* group (e.g.
+  # DEBUG_QEMU_ARM64_VIRT among the "low level debug port" choice) leaves
+  # .config in a state Kbuild's own implicit config-resync can't settle
+  # non-interactively -- confirmed for real: the parallel `-j` build
+  # itself tried to prompt for the choice ("choice[1-14?]:") and errored
+  # out ("Error in reading or end of file") with no tty attached. Same
+  # root cause and same fix as coreboot.yaml's own olddefconfig step.
   config_command: >-
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
     if [ -n "${vars.extra_conf_file}" ]; then ./scripts/kconfig/merge_config.sh -m .config ${vars.extra_conf_file}; fi &&
-    printf '%s\n' '${vars.extra_conf}' >> .config
+    printf '%s\n' '${vars.extra_conf}' >> .config &&
+    make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE olddefconfig
   command: >-
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
     if [ -n "${vars.extra_conf_file}" ]; then ./scripts/kconfig/merge_config.sh -m .config ${vars.extra_conf_file}; fi &&
     printf '%s\n' '${vars.extra_conf}' >> .config &&
+    make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE olddefconfig &&
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS}
 artifacts:
   # barebox drops several files into images/; which one a target wants is
