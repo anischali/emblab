@@ -77,7 +77,7 @@ def ensure_image(image, workspace, *, log=print):
 
     for cmd in image.provision:
         log(f"[{image.name}] provisioning: {cmd}")
-        run(image, workspace, command=["sh", "-c", cmd], workdir="/", log=log)
+        run(image, workspace, command=["sh", "-c", cmd], workdir="/", user="root", log=log)
 
     state.write_marker(marker_path, current_hash)
     log(f"[{image.name}] provisioned")
@@ -108,12 +108,13 @@ def ensure_builddeps(image, component_name, builddeps, workspace, *, log=print):
         workspace,
         command=["sh", "-c", f"apt-get update && apt-get install -y --no-install-recommends {deps}"],
         workdir="/",
+        user="root",
         log=log,
     )
     state.write_marker(marker_path, current_hash)
 
 
-def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, check=True, log=print):
+def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, user=None, check=True, log=print):
     """Run `command` inside the provisioned container for `image`.
 
     Note: udocker's `--bindhome` is a bare boolean flag (no `=value` form —
@@ -121,12 +122,24 @@ def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, c
     home", which is what we want. Volume mounts are `--volume=`, not `-v=`
     (udocker has no `-v` shorthand).
 
+    `user`: overrides the container's own default identity — needed for
+    apt-get/dpkg calls (ensure_image's provisioning loop, ensure_builddeps)
+    against a base image whose default user isn't root (confirmed for
+    real: docker.io/coreboot/coreboot-sdk defaults to a non-root "coreboot"
+    uid 1000, unlike e.g. debian:bookworm-slim — a fresh package install
+    there failed with dpkg's own "requested operation requires superuser
+    privilege", not a udocker/proot faking bug). Left unset (None) for a
+    component's own build.command, which should keep running as whatever
+    identity the image actually intends for regular build work.
+
     `check=False` is for callers like qemu.py that need the raw
     CompletedProcess (e.g. to propagate QEMU's own exit code) rather than an
     exception on a non-zero return — the normal build path always wants
     `check=True` (the default) so a failed build command stops the pipeline.
     """
     args = ["run"]
+    if user is not None:
+        args.append(f"--user={user}")
     args.append(f"--volume={HELPERS_DIR}:{HELPERS_MOUNT}")
     for host_path, container_path in bind_mounts:
         args.append(f"--volume={host_path}:{container_path}")

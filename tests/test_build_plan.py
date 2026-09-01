@@ -54,7 +54,7 @@ def test_build_plan_renders_verbatim_tfa_command(tmp_path, monkeypatch):
     def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
-    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, user=None, log=print):
         recorded.append((image.name, command))
 
     with patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
@@ -100,7 +100,7 @@ def test_build_plan_secureboot_uboot_omits_arm_linux_kernel_as_bl33(tmp_path, mo
     def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
-    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, user=None, log=print):
         recorded.append((image.name, command))
 
     with patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
@@ -146,7 +146,7 @@ def test_build_plan_skips_unchanged_component_on_second_run(tmp_path, monkeypatc
     def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
-    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, user=None, log=print):
         run_calls.append(command)
 
     with patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
@@ -234,7 +234,7 @@ def test_build_plan_fit_target_resolves_kernel_and_ramdisk_and_copies_its(tmp_pa
     def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
-    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, user=None, log=print):
         recorded.append((image.name, command))
 
     with patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
@@ -320,7 +320,7 @@ def test_build_plan_edk2_fvbootdxe_barebox_bundles_via_patch_and_flag(tmp_path, 
         recorded_patches[component.name] = patches
         return Path(workspace) / "src" / component.source.path
 
-    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, user=None, log=print):
         recorded_cmds[workdir.rsplit("/", 1)[-1]] = command[-1]
 
     with patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
@@ -376,7 +376,7 @@ def test_build_files_content_change_triggers_rebuild(tmp_path, monkeypatch):
     def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
-    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, user=None, log=print):
         run_calls.append(command)
 
     with patch("emblab.build.manifests.load_target", return_value=target), \
@@ -506,7 +506,7 @@ def test_builddeps_installed_once_then_skipped_on_rebuild(tmp_path, monkeypatch)
     def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
-    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, user=None, log=print):
         run_calls.append(command)
 
     with patch("emblab.build.manifests.load_target", return_value=target), \
@@ -566,7 +566,7 @@ def test_setup_step_runs_after_builddeps_installed_and_is_skipped_when_unchanged
     def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
-    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, user=None, log=print):
         run_calls.append(command[-1])
 
     with patch("emblab.build.manifests.load_target", return_value=target), \
@@ -769,7 +769,7 @@ def test_shell_context_runs_config_command_and_exports_arch(tmp_path, monkeypatc
 
     run_calls = []
 
-    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, user=None, log=print):
         run_calls.append(command)
 
     with patch("emblab.build.manifests.load_target", return_value=target), \
@@ -813,7 +813,7 @@ def test_target_arch_resolves_as_env_arch_template_token(tmp_path, monkeypatch):
     def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
-    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, user=None, log=print):
         recorded.append((command, extra_env))
 
     with patch("emblab.build.manifests.load_target", return_value=target), \
@@ -866,7 +866,7 @@ def test_component_not_referencing_env_arch_is_structurally_unaffected(tmp_path,
     def fake_ensure_source(workspace, component, patches, **kwargs):
         return Path(workspace) / "src" / component.source.path
 
-    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, user=None, log=print):
         recorded.append((command, extra_env))
 
     with patch("emblab.build.manifests.load_target", return_value=target), \
