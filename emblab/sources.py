@@ -63,6 +63,17 @@ def source_dir(workspace, component):
     return Path(workspace) / "src" / component.source.path
 
 
+def is_modified(workspace, component):
+    """True if `mark_modified` has been called for this component and
+    `mark_finished` hasn't cleared it since — build.py uses this to keep
+    running the build step (and stop re-copying build.files over) even when
+    its own marker hash matches, since a hand edit under
+    workspace/src/<path> changes real build inputs that component_hash()
+    never encoded in the first place (it only ever hashed source ref +
+    resolved vars + patches, never actual tree content)."""
+    return (source_dir(workspace, component) / MANUAL_EDIT_MARKER_NAME).exists()
+
+
 def _current_head(path):
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True

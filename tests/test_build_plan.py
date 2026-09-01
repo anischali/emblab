@@ -161,6 +161,62 @@ def test_build_plan_skips_unchanged_component_on_second_run(tmp_path, monkeypatc
     assert second_run_count == first_run_count  # nothing rebuilt on the second, unchanged run
 
 
+def test_build_plan_reruns_and_does_not_reoverwrite_files_when_source_under_manual_edit(tmp_path, monkeypatch):
+    """component_hash() never hashes actual source tree content (only ref +
+    resolved vars + patches — see sources.is_modified's docstring), so a
+    component someone is hand-editing under workspace/src/<path> (ADR-014's
+    `emblab modify`) would otherwise look "unchanged" and get skipped on
+    every subsequent `emblab build`, silently never picking up the edit.
+    build.py must keep rebuilding it every time while it's marked modified,
+    and must stop re-copying build.files over it (one of those copied-in
+    files may be exactly what's being hand-edited)."""
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+
+    target_name = "qemu-arm64-coreboot-barebox"
+    target = manifests.load_target(target_name)
+    for entry in target.stack:
+        component = manifests.load_component(entry.component)
+        _precreate_source_and_artifacts(tmp_path, component, entry)
+
+    run_calls = []
+    copy_calls = []
+
+    def fake_ensure_source(workspace, component, patches, **kwargs):
+        return Path(workspace) / "src" / component.source.path
+
+    def fake_is_modified(workspace, component):
+        return component.name == "coreboot"
+
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, user=None, log=print):
+        run_calls.append((workdir, command))
+
+    import shutil as real_shutil
+    original_copy2 = real_shutil.copy2
+
+    def fake_copy2(src, dst):
+        copy_calls.append((str(src), str(dst)))
+        return original_copy2(src, dst)
+
+    with patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
+         patch("emblab.build.sources.is_modified", side_effect=fake_is_modified), \
+         patch("emblab.build.containers.ensure_image", return_value=None), \
+         patch("emblab.build.containers.run", side_effect=fake_run), \
+         patch("emblab.build.shutil.copy2", side_effect=fake_copy2):
+        build_mod.build(target_name, tmp_path)
+        first_coreboot_runs = sum(1 for workdir, _ in run_calls if workdir.endswith("/src/coreboot"))
+        first_copy_calls = len(copy_calls)
+        build_mod.build(target_name, tmp_path)
+        second_coreboot_runs = sum(1 for workdir, _ in run_calls if workdir.endswith("/src/coreboot")) - first_coreboot_runs
+
+    assert first_coreboot_runs == 1
+    # Marked modified -> rebuilds again on the second run instead of being
+    # skipped as "unchanged" (unlike every other, unmarked component).
+    assert second_coreboot_runs == 1
+    # coreboot.yaml's build.files (configs/config.emblab_qemu_aarch64) must
+    # never be re-copied while coreboot is marked modified.
+    assert not any("config.emblab_qemu_aarch64" in src for src, _ in copy_calls[first_copy_calls:])
+
+
 def test_barebox_extra_conf_defaults_to_noop_merge():
     """No target sets vars.extra_conf_file, and vars.extra_conf is empty ->
     the merge_config.sh step is a literal shell no-op (empty -n check),

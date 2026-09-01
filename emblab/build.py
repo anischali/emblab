@@ -47,6 +47,7 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
 
         containers.ensure_image(image, workspace, log=log)
         src_dir = sources.ensure_source(workspace, component, merged_patches, log=log)
+        under_manual_edit = sources.is_modified(workspace, component)
 
         # FILES: the absolute path build.files get copied into (this
         # component's own source dir) — lets e.g. coreboot's own defconfig
@@ -92,12 +93,19 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
         )
         have_artifacts = state.artifacts_exist(workspace, target.name, component_name, component.artifacts)
 
-        if not force and have_artifacts and state.marker_matches(marker_path, current_hash):
+        if not force and not under_manual_edit and have_artifacts and state.marker_matches(marker_path, current_hash):
             log(f"[{component_name}] unchanged, skipping build")
         else:
-            for filename in component.build.files:
-                file_src = manifests.component_file_path(component_name, filename)
-                shutil.copy2(file_src, src_dir / filename)
+            if under_manual_edit:
+                log(f"[{component_name}] source under manual edit, building with it as-is (not overriding it)")
+            else:
+                # build.files are only re-copied in for normal, driver-owned
+                # trees — under manual edit, one of them may be exactly what
+                # someone is hand-editing in place (e.g. coreboot's own
+                # defconfig), and re-copying would silently clobber it.
+                for filename in component.build.files:
+                    file_src = manifests.component_file_path(component_name, filename)
+                    shutil.copy2(file_src, src_dir / filename)
 
             rendered_cmd = templating.render_command(
                 component.build.command, resolved_vars=resolved_vars, env=component_env
