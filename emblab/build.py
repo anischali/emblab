@@ -48,8 +48,15 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
         containers.ensure_image(image, workspace, log=log)
         src_dir = sources.ensure_source(workspace, component, merged_patches, log=log)
 
+        # FILES: the absolute path build.files get copied into (this
+        # component's own source dir) — lets e.g. coreboot's own defconfig
+        # var spell out "${files}/configs/..." explicitly rather than an
+        # ambiguous bare relative path. Per-component, so a fresh dict each
+        # iteration rather than mutating the shared `env`.
+        component_env = {**env, "FILES": str(src_dir)}
+
         merged_vars = {**component.build.vars, **entry.vars}
-        resolved_vars = templating.resolve_vars(merged_vars, env=env, artifacts=artifacts_by_component)
+        resolved_vars = templating.resolve_vars(merged_vars, env=component_env, artifacts=artifacts_by_component)
 
         # Installed here, ahead of build.setup, not just ahead of
         # build.command below: ensure_builddeps is itself marker-based
@@ -66,7 +73,7 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
                 log(f"[{component_name}] setup unchanged, skipping")
             else:
                 rendered_setup = templating.render_command(
-                    component.build.setup, resolved_vars=resolved_vars, env=env
+                    component.build.setup, resolved_vars=resolved_vars, env=component_env
                 )
                 containers.run(
                     image,
@@ -93,7 +100,7 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
                 shutil.copy2(file_src, src_dir / filename)
 
             rendered_cmd = templating.render_command(
-                component.build.command, resolved_vars=resolved_vars, env=env
+                component.build.command, resolved_vars=resolved_vars, env=component_env
             )
             containers.run(
                 image,
@@ -107,7 +114,7 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
             dest_dir = artifacts_root / component_name
             dest_dir.mkdir(parents=True, exist_ok=True)
             for key, rel_path in component.artifacts.items():
-                resolved_rel_path = templating.render_command(rel_path, resolved_vars=resolved_vars, env=env)
+                resolved_rel_path = templating.render_command(rel_path, resolved_vars=resolved_vars, env=component_env)
                 src = src_dir / resolved_rel_path
                 dst = dest_dir / key
                 if not src.exists():
@@ -190,8 +197,11 @@ def shell_context(target_name, workspace, component_name=None, *, log=print):
                 workspace, target.name, other_name, other_component.artifacts
             )
 
+    # FILES: same per-component ${files} token build() exposes (see there).
+    component_env = {**env, "FILES": str(src_dir)}
+
     merged_vars = {**component.build.vars, **entry.vars}
-    resolved_vars = templating.resolve_vars(merged_vars, env=env, artifacts=artifacts_by_component)
+    resolved_vars = templating.resolve_vars(merged_vars, env=component_env, artifacts=artifacts_by_component)
 
     if component.build.config_command:
         # Same static files build() copies in ahead of build.command (e.g.
@@ -202,7 +212,7 @@ def shell_context(target_name, workspace, component_name=None, *, log=print):
             shutil.copy2(file_src, src_dir / filename)
 
         rendered_config = templating.render_command(
-            component.build.config_command, resolved_vars=resolved_vars, env=env
+            component.build.config_command, resolved_vars=resolved_vars, env=component_env
         )
         containers.run(
             image,

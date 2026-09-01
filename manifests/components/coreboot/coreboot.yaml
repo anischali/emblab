@@ -34,7 +34,10 @@ build:
   files:
     - configs/config.emblab_qemu_aarch64
   vars:
-    defconfig: configs/config.emblab_qemu_aarch64
+    # ${files} is the absolute path build.files get copied into (this
+    # component's own source dir) — spelled out explicitly since this is
+    # an external defconfig (this project's own, not upstream coreboot's).
+    defconfig: ${files}/configs/config.emblab_qemu_aarch64
     # Individual literal Kconfig lines appended straight onto .config —
     # a plain multi-line string (a YAML list also works; both are joined
     # the same way by templating.resolve_value). A Kconfig *choice* group

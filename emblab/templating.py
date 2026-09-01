@@ -1,14 +1,23 @@
 """Token resolution for emblab manifests.
 
-Three namespaces, resolved by splitting a ``${...}`` token on the first ``.``:
+Four namespaces, resolved by splitting a ``${...}`` token on the first ``.``:
 
 - ``vars.NAME``    -> looked up in a merged vars dict (component defaults,
                       overridden by a target stack entry's vars).
 - ``env.NAME``     -> looked up in a small emblab-injected environment
                       (``env.JOBS``, ``env.WORKSPACE``).
-- ``<component>.<artifact-key>`` (no ``vars.``/``env.`` prefix) -> the
-                      absolute host path of another component's already-built
-                      artifact. Only legal inside a *target's* stack vars.
+- ``files``        -> bare, no ``.NAME`` (there's only one value) — the
+                      absolute path build.files are copied into (the
+                      component's own source directory root). Legal inside
+                      a component's own build.vars/build.command, unlike a
+                      bare ``<component>.<key>`` token, since it names no
+                      other component. build.py injects it per-component as
+                      ``env["FILES"]`` right before resolving that
+                      component's vars/command.
+- ``<component>.<artifact-key>`` (no ``vars.``/``env.``/``files`` prefix) ->
+                      the absolute host path of another component's
+                      already-built artifact. Only legal inside a *target's*
+                      stack vars.
 """
 
 import os
@@ -18,7 +27,7 @@ from .errors import TemplateError
 
 TOKEN_RE = re.compile(r"\$\{([a-zA-Z0-9_.-]+)\}")
 
-RESERVED_PREFIXES = ("vars", "env")
+RESERVED_PREFIXES = ("vars", "env", "files")
 
 
 def component_refs(value, known_components):
@@ -84,6 +93,12 @@ def resolve_value(value, *, merged_vars, env, artifacts):
 
     def _sub(match):
         token = match.group(1)
+        if token == "files":
+            if "FILES" not in env:
+                raise TemplateError(
+                    f"unknown token '${{{token}}}': no files directory available here"
+                )
+            return str(env["FILES"])
         if token.startswith("vars."):
             name = token[len("vars."):]
             if name not in merged_vars:
