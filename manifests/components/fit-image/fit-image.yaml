@@ -2,14 +2,10 @@ name: fit-image
 description: >
   Sourceless packaging component: assembles a kernel + ramdisk into a FIT
   image via mkimage. No upstream repo — see ADR-005 for the sourceless-
-  component design. mkimage invocation (mkimage -f fit-image.its fitImage)
-  and the .its /incbin/() literal filenames (Image, initramfs.cpio.gz) are
-  transcribed from barebox-arm64-poc/generate-fit's generate_fit() and its
-  real fit-image.its. UNSIGNED for now: the real project's command adds
-  `-F -r -k keys` to sign, which needs a `signature` node in the .its (see
-  CONTEXT.md's Next) — the `setup` step below only generates the signing
-  key/cert ahead of time via helpers/fitkeys-ctl (ADR-011's example use
-  case for a setup step), it isn't consumed by `command` yet.
+  component design. UNSIGNED for now: signing needs `-F -r -k keys` plus a
+  `signature` node in the .its, neither of which `command` does yet — the
+  `setup` step below only generates the signing key/cert ahead of time
+  (ADR-011's example use case for a setup step).
 build:
   files:
     - fit-image.its

@@ -1,36 +1,22 @@
 name: u-boot
 description: >
-  UNVERIFIED build command — no u-boot invocation was found anywhere in
-  barebox-arm64-poc (it's a barebox-based project); this manifest exists
-  purely to demonstrate tf-a's bl33_flags override for a real-bootloader
-  BL33 provider, see qemu-arm64-secureboot-uboot.yaml. Uses u-boot's
-  standard defconfig+make pattern with qemu_arm64_defconfig, the mainline
-  upstream defconfig for QEMU's aarch64 virt machine. MUST be validated
-  against a real `git clone` before being trusted — see CONTEXT.md's Next
-  section, mirroring the path barebox.yaml already went through.
+  Standard u-boot defconfig+make pattern, qemu_arm64_defconfig.
 source:
   git: https://github.com/u-boot/u-boot.git
   ref: master
   path: u-boot
 build:
-  # vars.arch has no default here — arch is a target concern, not a
-  # component one (see ADR-009); every target's stack entry for u-boot
-  # must set it. Not ${env.ARCH} (which would resolve to "arm64") — u-boot
-  # keeps a single arch/arm/ Kbuild tree for both AArch32 and AArch64
-  # (CONFIG_ARM64 selected by the defconfig chosen, not by a separate ARCH
-  # value), same arch-naming mismatch already hit for OP-TEE (ADR-006);
-  # for this QEMU aarch64 target, the value a target must supply is "arm".
+  # vars.arch has no default — every target's stack entry must set it
+  # (components stay arch-agnostic, ADR-009). Not ${env.ARCH} (which would
+  # resolve to "arm64") — u-boot keeps a single arch/arm/ Kbuild tree for
+  # both AArch32 and AArch64 (CONFIG_ARM64 comes from the defconfig
+  # chosen, not from ARCH); the value a target must supply is "arm".
   vars:
     defconfig: qemu_arm64_defconfig
-    # extra_conf/extra_conf_file: same mechanism as barebox.yaml/
-    # coreboot.yaml/linux-kernel.yaml — extra_conf is individual literal
-    # Kconfig lines appended straight onto .config (a plain multi-line
-    # string; no apostrophes in any line, single-quoted printf below);
-    # extra_conf_file is one or more actual Kconfig fragment files, merged
-    # via u-boot's own scripts/kconfig/merge_config.sh -m (space-separated
-    # if more than one) — the right tool for a Kconfig *choice* group,
-    # where extra_conf's line would also need the group's other members'
-    # disabling "# CONFIG_X is not set" lines spelled out. Both empty by
+    # Same extra_conf/extra_conf_file mechanism as barebox.yaml/
+    # coreboot.yaml/linux-kernel.yaml: extra_conf is individual literal
+    # Kconfig lines appended straight onto .config; extra_conf_file is one
+    # or more fragment files merged via merge_config.sh -m. Both empty by
     # default.
     extra_conf: ""
     extra_conf_file: ""

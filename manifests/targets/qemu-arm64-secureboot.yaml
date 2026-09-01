@@ -1,10 +1,6 @@
 name: qemu-arm64-secureboot
 description: >
-  TF-A BL1/BL2/BL31 + OP-TEE BL32 + barebox BL33, secure=on. QEMU args
-  transcribed verbatim from barebox-arm64-poc/generate-fit's known-correct
-  (currently commented out) secure-boot invocation. Exercises the full
-  schema: a three-component stack, cross-component artifact wiring, and a
-  conditionally-populated flag-group var.
+  TF-A BL1/BL2/BL31 + OP-TEE BL32 + barebox BL33, secure=on.
 arch: arm64
 stack:
   - component: optee-os

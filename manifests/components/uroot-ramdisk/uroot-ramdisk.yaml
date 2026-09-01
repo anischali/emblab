@@ -1,14 +1,9 @@
 name: uroot-ramdisk
 description: >
-  u-root initramfs, optionally embedding other components' build artifacts.
-  Command shape (-o, repeatable -files SRC:DST) transcribed from
-  barebox-arm64-poc/generate-fit's generate_ramdisk(), and cross-checked
-  directly against the real flag definitions in the vendored dependency
-  source (github.com/u-root/mkuimage's uimage/mkuimage/uflags.go: "-files"
-  is repeatable; uimage/uimage.go's ParseExtraFiles doc comment confirms
-  the "src:dst" syntax). -skip-ldd is used because embedded files here are
-  typically cross-compiled for the target arch — the host's ldd shouldn't
-  walk a foreign-arch ELF's dependencies.
+  u-root initramfs, optionally embedding other components' build artifacts
+  via repeatable -files SRC:DST arguments. -skip-ldd is used because
+  embedded files here are typically cross-compiled for the target arch —
+  the host's ldd shouldn't walk a foreign-arch ELF's dependencies.
 source:
   git: https://github.com/u-root/u-root.git
   ref: main

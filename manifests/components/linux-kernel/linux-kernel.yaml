@@ -1,11 +1,7 @@
 name: linux-kernel
 description: >
-  UNVERIFIED build command. No kernel build invocation was found anywhere
-  in barebox-arm64-poc (matches the same situation barebox.yaml started
-  in). Uses the standard defconfig + Kconfig-fragment-merge pattern
-  (scripts/kconfig/merge_config.sh, shipped in every mainline kernel tree)
-  as a best-effort starting point — see CONTEXT.md's Next section, and see
-  ADR-005 for the build.files/fragments mechanism this demonstrates.
+  Standard defconfig + Kconfig-fragment-merge pattern
+  (scripts/kconfig/merge_config.sh, shipped in every mainline kernel tree).
 source:
   git: https://github.com/torvalds/linux.git
   ref: master
@@ -13,23 +9,17 @@ source:
 build:
   files:
     - tiny.cfg
-  # vars.arch has no default here — arch is a target concern, not a
-  # component one (see ADR-009); every target's stack entry for
-  # linux-kernel must set it.
+  # vars.arch has no default — every target's stack entry must set it
+  # (components stay arch-agnostic, ADR-009).
   vars:
     defconfig: defconfig
     # Space-separated build.files entries to merge via merge_config.sh — a
     # target can override this to select a different fragment subset.
     extra_conf_file: tiny.cfg
-    # Individual literal Kconfig lines a target wants appended straight
-    # onto .config, in addition to (or instead of) extra_conf_file — a
-    # plain multi-line string (a YAML list of strings also works, same
-    # result: templating.resolve_value joins either shape with newlines).
-    # The block-scalar string avoids having to quote a "# CONFIG_X is not
-    # set" line, which a plain-scalar list item would need (YAML reads a
-    # leading `#` as a comment there, not inside a `|` block). No
-    # apostrophes in any line (single-quoted printf below). Empty by
-    # default.
+    # Individual literal Kconfig lines appended straight onto .config, in
+    # addition to (or instead of) extra_conf_file — a plain multi-line
+    # string (a YAML list also works, same result). No literal `'` in any
+    # line (single-quoted printf below). Empty by default.
     extra_conf: ""
   command: >-
     set -e;
@@ -39,8 +29,6 @@ build:
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE olddefconfig;
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS} Image
 artifacts:
-  # arch/<ARCH>/boot/Image is itself arch-dependent (e.g. arch/riscv/boot/
-  # Image) — templated the same as the command, via the same vars.arch a
-  # target must set (build.py resolves vars./env. tokens in artifacts:
-  # paths too, not just build.command).
+  # arch/<ARCH>/boot/Image is itself arch-dependent — templated via the
+  # same vars.arch a target must set.
   image: arch/${vars.arch}/boot/Image

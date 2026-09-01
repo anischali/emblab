@@ -3,12 +3,7 @@ description: >
   Trusted Firmware-A, PLAT=qemu. BL32/BL33 are left as vars so a target can
   wire in OP-TEE and any BL33 provider (barebox/u-boot/edk2) — this is a
   pure component, it never references another component itself; only a
-  target's stack vars may do that. Build flags transcribed verbatim from
-  barebox-arm64-poc/build.sh, except CROSS_COMPILE=aarch64-linux-gnu- was
-  changed to $CROSS_COMPILE (the real shell env var from whichever image
-  the target picks) — components stay agnostic of the toolchain/arch, see
-  ADR-009. Ref pinned to 'master' for now — pin an exact tag once
-  validated end-to-end (see CONTEXT.md).
+  target's stack vars may do that.
 source:
   git: https://git.trustedfirmware.org/TF-A/trusted-firmware-a.git
   ref: master
@@ -19,15 +14,12 @@ build:
     # Empty by default (no secure payload). A target that wants OP-TEE as
     # BL32 sets this to the fully-formed "BL32=... BL32_EXTRA1=... BL32_EXTRA2=..."
     # string — make needs these flags entirely ABSENT for "no secure OS",
-    # not present-with-empty-value, so a single conditionally-populated var
-    # is the minimal way to express that.
+    # not present-with-empty-value.
     bl32_flags: ""
-    # ARM_LINUX_KERNEL_AS_BL33=1 by default — barebox-arm64-poc's proven
-    # invocation this command was transcribed from always set it, since it
-    # loads BL33 as a raw kernel/EFI payload rather than a real bootloader
-    # image (correct for barebox's EFI-mode build). A real bootloader BL33
-    # (u-boot, say) is its own BL33 and needs this flag entirely ABSENT, not
-    # set to 0 — same conditionally-populated-var trick as bl32_flags: a
+    # ARM_LINUX_KERNEL_AS_BL33=1 by default: loads BL33 as a raw
+    # kernel/EFI payload rather than a real bootloader image (correct for
+    # barebox's EFI-mode build). A real bootloader BL33 (u-boot, say) is
+    # its own BL33 and needs this flag entirely ABSENT, not set to 0 — a
     # target overrides bl33_flags to "" for that case.
     bl33_flags: "ARM_LINUX_KERNEL_AS_BL33=1"
     bl33: ""

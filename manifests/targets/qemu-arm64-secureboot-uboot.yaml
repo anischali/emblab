@@ -1,12 +1,9 @@
 name: qemu-arm64-secureboot-uboot
 description: >
-  Same TF-A BL1/BL2/BL31 + OP-TEE BL32 stack as qemu-arm64-secureboot, but
-  with u-boot as BL33 instead of barebox — demonstrates tf-a's bl33_flags
-  override for a real-bootloader BL33 (u-boot is its own BL33, unlike
-  barebox's EFI-mode build which TF-A loads as a raw kernel/EFI payload
-  via ARM_LINUX_KERNEL_AS_BL33=1; see tf-a.yaml). QEMU args copied from
-  qemu-arm64-secureboot unchanged — the boot chain up through BL31/BL32
-  is identical, only BL33 differs.
+  Same TF-A BL1/BL2/BL31 + OP-TEE BL32 stack as qemu-arm64-secureboot, with
+  u-boot as BL33 instead of barebox — u-boot is its own BL33, so
+  tf-a.yaml's bl33_flags is cleared (barebox's EFI-mode build instead needs
+  ARM_LINUX_KERNEL_AS_BL33=1, see tf-a.yaml).
 arch: arm64
 stack:
   - component: optee-os

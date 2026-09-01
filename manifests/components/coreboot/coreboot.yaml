@@ -1,80 +1,28 @@
 name: coreboot
 description: >
-  UNVERIFIED build command — unlike every other component here, there is no
-  barebox-arm64-poc reference invocation for coreboot to transcribe from,
-  so this is a first-principles best-effort against upstream coreboot
-  conventions, not yet run against a real clone (see CONTEXT.md's Next).
-
   Builds coreboot's src/mainboard/emulation/qemu-aarch64 target. Unlike
-  edk2/barebox's own QEMU "-kernel" chain-load, coreboot never consumes
-  QEMU's -kernel fw_cfg loader — the only real way to hand a second-stage
-  bootloader to coreboot is to bundle it into CBFS as coreboot's own
-  payload at build time (same idea as edk2's target-optional FvBootDxe
-  bundling, ADR-010 — except here bundling is the only boot path, not an
-  alternative to an already-working chain-loaded one, since coreboot has
-  no chain-loaded option to fall back to). vars.extra_conf (below) is
-  how a target supplies that payload.
+  edk2/barebox, coreboot doesn't chain-load via QEMU's -kernel fw_cfg —
+  a second-stage bootloader must be bundled into CBFS as coreboot's own
+  payload at build time. vars.extra_conf (below) supplies that payload.
 
-  Toolchain: uses coreboot's own official prebuilt cross-toolchain image
-  (`manifests/images/coreboot-sdk.yaml`, `docker.io/coreboot/coreboot-sdk`
-  — see the target manifest's `image:`), not this project's own
-  `gnu-aarch64` image, and not a from-source `util/crossgcc` build.
-  Pointing coreboot at `gnu-aarch64`'s own `aarch64-linux-gnu-` toolchain
-  was tried for real and confirmed NOT viable: with `CONFIG_ANY_TOOLCHAIN=y`
-  (relaxing `toolchain.mk`'s "coreboot toolchain" `-v`-banner check to "any
-  toolchain present"), the real build got as far as compiling host tools
-  before failing — `gcc: error: unrecognized command-line option
-  '-std=gnu23'`. coreboot's `main` (Makefile.mk: `CFLAGS_common +=
-  -std=gnu23`) requires a GCC with finalized C23 support, i.e. GCC 14+;
-  Debian bookworm (`gnu-aarch64`'s base image) ships GCC 12.2.0, and
-  bookworm-backports carries no newer `gcc` package at all.
-  Building coreboot's own crossgcc from source (`make crossgcc-aarch64`,
-  `util/crossgcc/buildgcc`'s pinned GCC 15.2.0) was tried next and DID
-  satisfy that requirement, but was slow on every fresh clone (a real
-  from-source GCC/binutils build) and needed its own patch (skip
-  GMP/MPFR/MPC, use the system copies instead), `ccache` flag, and
-  `gnat-12` builddep to be practical — all now unnecessary, replaced by
-  pointing `XGCCPATH` (coreboot's own override mechanism, confirmed real
-  in `util/xcompile/xcompile`: `XGCCPATH=$1`, passed straight through from
-  `make XGCCPATH=...`, no crossgcc build needed at all) at `coreboot-sdk`'s
-  `/opt/xgcc/bin`. Confirmed for real against the actual pulled image:
-  `/opt/xgcc/bin/aarch64-elf-gcc --version` reads "(coreboot toolchain
-  v2024-12-21_306660c2de) 14.2.0" — built via this same `buildgcc`, just
-  distributed prebuilt, so `toolchain.mk`'s own `-v`-banner check accepts
-  it with no `CONFIG_ANY_TOOLCHAIN` workaround needed, and `-std=gnu23`
-  compiles cleanly (`aarch64-elf-gcc -std=gnu23 -E -x c /dev/null -o
-  /dev/null` — confirmed against the real image). The image also ships a
-  full binutils set (as/ld/objcopy/objdump/...) plus iasl/nasm at the same
-  path, matching what `crossgcc-aarch64`'s from-source build used to
-  provide.
+  Toolchain: uses coreboot's own prebuilt cross-toolchain image
+  (coreboot-sdk, docker.io/coreboot/coreboot-sdk), not gnu-aarch64 and not
+  a from-source util/crossgcc build. coreboot's main requires -std=gnu23
+  (GCC 14+); gnu-aarch64's Debian bookworm base only ships GCC 12.2.0.
+  coreboot-sdk's /opt/xgcc/bin/aarch64-elf-gcc is GCC 14.2.0 and satisfies
+  it directly via XGCCPATH, with no from-source crossgcc build needed.
 
-  vars.defconfig originally guessed "configs/config.emulation_qemu-aarch64"
-  (a plausible-looking name that doesn't actually exist upstream — real
-  names use underscores, e.g. config.emulation_qemu_aarch64_zstd /
-  _fit_support_timestamps). Neither real one is a clean minimal baseline
-  for our purposes (zstd adds unwanted ramstage compression;
-  fit_support_timestamps pulls in CONFIG_PAYLOAD_FIT_SUPPORT, which
-  conflicts with the plain CONFIG_PAYLOAD_ELF this component's
-  extra_conf uses) — both are confirmed (by reading them) to reduce to
-  just CONFIG_VENDOR_EMULATION=y + CONFIG_BOARD_EMULATION_QEMU_AARCH64=y
-  plus their own extras, so files/configs/config.emblab_qemu_aarch64 below
-  supplies exactly that minimal pair ourselves, copied into the clone's
-  own configs/ dir by build.files (same static-file mechanism ADR-007
-  already established for patches).
+  vars.defconfig points at files/configs/config.emblab_qemu_aarch64, a
+  minimal local defconfig (CONFIG_VENDOR_EMULATION + BOARD_EMULATION_
+  QEMU_AARCH64 only) rather than an upstream one — upstream's own qemu-
+  aarch64 defconfigs pull in extras (zstd compression, PAYLOAD_FIT_SUPPORT)
+  that conflict with this component's payload config.
 
   source.submodules is a list, not `true`: coreboot's .gitmodules carries
-  many vendor-specific 3rdparty/ trees (AMD OpenSIL, Intel STM, PPC
-  signing utils, opensbi, ...) that qemu-aarch64 needs none of — confirmed
-  against a real clone attempt, where a transient TLS failure fetching the
-  entirely-unrelated AMD OpenSIL submodule broke the whole build. The
-  mainboard's own Kconfig (`select ARM64_USE_ARM_TRUSTED_FIRMWARE`) does
-  need 3rdparty/arm-trusted-firmware (and that submodule's own nested
-  ones, pulled in recursively). `3rdparty/vboot` is also real and
-  required, confirmed for real — not a Kconfig-gated dependency at all:
-  `commonlib/bsd/include/commonlib/bsd/cbfs_serialized.h` unconditionally
-  `#include <vb2_sha.h>` (from vboot), which the cbfstool host-tool build
-  needs regardless of whether verified boot itself is enabled — an
-  originally-guessed "vboot isn't needed" was wrong (see CONTEXT.md).
+  many vendor-specific 3rdparty/ trees unrelated to this board. Only
+  3rdparty/arm-trusted-firmware (selected by the mainboard's Kconfig) and
+  3rdparty/vboot (an unconditional cbfstool host-tool dependency via
+  commonlib/bsd/cbfs_serialized.h, not Kconfig-gated) are needed.
 source:
   git: https://github.com/coreboot/coreboot.git
   ref: main
@@ -87,132 +35,39 @@ build:
     - configs/config.emblab_qemu_aarch64
   vars:
     defconfig: configs/config.emblab_qemu_aarch64
-    # extra_conf: individual literal Kconfig lines (e.g. CONFIG_PAYLOAD_ELF=y
-    # and CONFIG_PAYLOAD_FILE="...") a target wants appended straight onto
-    # .config — a plain multi-line string (a YAML list of strings also
-    # works, same result: templating.resolve_value joins either shape with
-    # newlines before it reaches build.command). The block-scalar string
-    # is the more ergonomic of the two here: a Kconfig *choice* group (e.g.
-    # CONFIG_PAYLOAD_*) needs its OTHER members' disabling
-    # "# CONFIG_X is not set" lines spelled out explicitly too, and inside
-    # a `|` block that needs no quoting at all — a plain-scalar list item
-    # starting with `#` would need it, since YAML reads that as a comment
-    # there. Empty by default (plain coreboot build, no bundled payload) —
-    # same conditionally-populated-var trick as edk2.yaml's
-    # fv_boot_app_flag/tf-a.yaml's bl32_flags.
-    #
-    # Two real, confirmed shell-quoting bugs already hit here, both from a
-    # real value containing its own literal `"` (CONFIG_PAYLOAD_FILE="...",
-    # CONFIG_PAYLOAD_OPTIONS="..."): (1) `if [ -n "${vars.extra_conf}" ]`
-    # — the embedded `"` closed the test's own quotes early, and once a
-    # value also had an unquoted space-separated token after that point
-    # (CONFIG_PAYLOAD_OPTIONS's `-l ...` cbfstool flags), `[` read `-l` as
-    # an operator and errored ("unexpected operator") — `set -e` does NOT
-    # abort on a failed `if` condition, so this failed *silently*, just
-    # never running the printf, producing a payload-less coreboot.rom with
-    # no visible build error. (2) Removing the `if` guard and double-
-    # quoting the printf argument instead (`printf '%s\n'
-    # "${vars.extra_conf}"`) hit the exact same embedded-`"` problem one
-    # level down: the value split into multiple unquoted shell words, and
-    # printf's format recycles across extra arguments — confirmed for
-    # real, wrote each word onto its own line with quotes/spaces stripped,
-    # corrupting `.config` badly enough Make itself errored ("missing
-    # separator") parsing it. build.command now single-quotes the printf
-    # argument instead (`printf '%s\n' '${vars.extra_conf}'`) — safe
-    # specifically because no real extra_conf line ever contains a
-    # literal `'`, only `"`; single quotes have no escape mechanism at all
-    # in POSIX shell, so this only works because that stays true. The
-    # printf always runs unconditionally even when this is "" — an empty
-    # value just appends a blank line, which Kconfig ignores, so no `if`
-    # guard is needed at all.
+    # Individual literal Kconfig lines appended straight onto .config —
+    # a plain multi-line string (a YAML list also works; both are joined
+    # the same way by templating.resolve_value). A Kconfig *choice* group
+    # (e.g. CONFIG_PAYLOAD_*) needs its other members' disabling
+    # "# CONFIG_X is not set" lines spelled out too. No literal `'` in any
+    # line — this is substituted into a single-quoted shell string in
+    # build.command. Empty by default.
     extra_conf: ""
-    # extra_conf_file: one or more actual Kconfig fragment files, merged
-    # via coreboot's own scripts/kconfig/merge_config.sh -m (space-
-    # separated if more than one) — the right tool for a Kconfig *choice*
-    # group instead of hand-writing every other member's disabling line.
-    # Empty by default.
+    # One or more Kconfig fragment files, merged via merge_config.sh -m —
+    # the right tool for a Kconfig *choice* group instead of hand-writing
+    # every other member's disabling line. Empty by default.
     extra_conf_file: ""
-  # XGCCPATH points make at coreboot-sdk's prebuilt toolchain instead of
-  # coreboot's own util/crossgcc/xgcc (which nothing here ever populates
-  # any more — no build.setup, no from-source crossgcc build). See the
-  # description's Toolchain paragraph for why this replaced the earlier
-  # from-source approach (and its now-removed GMP/MPFR/MPC patch, ccache
-  # flag, gnat-12 builddep).
+  # UPDATED_SUBMODULES=1: coreboot's own Makefile.mk otherwise runs a bare
+  # `git submodule update --init` (every .gitmodules entry, ignoring
+  # source.submodules above) at parse time, which has been observed to
+  # wipe the source tree under udocker.
   #
-  # UPDATED_SUBMODULES=1 — confirmed real and root-caused for real: coreboot's
-  # own Makefile.mk (not this project's) runs a bare, unconditional
-  # `git submodule update --init` (no path filter) at parse time unless this
-  # is already set to 1 — it isn't gated by any make target, so it ran even
-  # for a plain `defconfig`. That bare call ignores our own scoped
-  # source.submodules init entirely and tries to pull EVERY submodule listed
-  # in .gitmodules (confirmed via an isolated real repro outside any
-  # container: ffs, intel-sec-tools, libgfxinit, libhwbase,
-  # open-power-signing-utils, opensbi, stm, vboot, 3x amd/opensil,
-  # util/goswid, util/nvidia/cbootimage — none of which qemu-aarch64 needs).
-  # On a plain host filesystem that repro left the tree intact, just
-  # bloated; but a real `emblab build` of this target reproduced
-  # CONTEXT.md's long-standing "mystery source-tree-wipe" bug immediately
-  # after this same "Updating git submodules." line ran under udocker —
-  # confirmed twice, `Makefile`/`.git`/`configs/`/`src/`/etc. all gone,
-  # only `3rdparty/`, `payloads/`, `tests/`, `util/`, `spd/`,
-  # `Documentation/`, `build/` left. Root cause of the udocker-specific
-  # destructiveness itself is still NOT understood (the bare update alone
-  # doesn't explain it on a normal filesystem), but skipping the whole
-  # block entirely sidesteps it: we already handle the submodules this
-  # mainboard needs (3rdparty/arm-trusted-firmware, 3rdparty/vboot — see
-  # source.submodules above) via source.submodules, so this project never
-  # needed coreboot's own auto-update to run at all.
+  # HOSTCC/HOSTCXX=clang: coreboot's host tools (cbfstool, sconfig, ...)
+  # build with $(HOSTCC), which defaults to the container's system gcc
+  # (too old for -std=gnu23) rather than coreboot-sdk's /opt/xgcc
+  # aarch64-elf-gcc; coreboot-sdk's bundled clang-18 handles -std=gnu23
+  # for host tools instead.
   #
-  # HOSTCC/HOSTCXX=clang/clang++ — a real, separate -std=gnu23 failure,
-  # confirmed against a real build: coreboot's host tools (cbfstool,
-  # util/sconfig, ...) build with $(HOSTCC), which defaults to the
-  # container's system `gcc` (coreboot-sdk is Debian bookworm-based same as
-  # gnu-aarch64 — confirmed for real: `gcc --version` -> Debian 12.2.0-14,
-  # no gcc-13/14/15 present at all), not /opt/xgcc's aarch64-elf-gcc — so
-  # XGCCPATH alone doesn't fix -std=gnu23 for HOSTCC the way it does for the
-  # target compiler. coreboot-sdk does bundle its own clang at
-  # /opt/xgcc/bin/clang-18 (coreboot officially supports building with
-  # clang — same image, confirmed `-std=gnu23` compiles clean with it same
-  # as the aarch64-elf-gcc check above), so point HOSTCC/HOSTCXX there
-  # instead of trying to find/build a newer host gcc.
+  # rm -rf build: a Kconfig symbol flipping between builds (e.g. via
+  # extra_conf) can leave a stale, already-linked ramstage/*.a that Make
+  # treats as up to date and doesn't relink against newly-relevant object
+  # files. Forcing a clean build/ avoids that whole class of staleness.
   #
-  # `rm -rf build` — real, confirmed staleness bug: when a Kconfig symbol
-  # flips from unset to y between one build attempt and the next against a
-  # not-yet-recloned source tree (e.g. extra_conf changing which
-  # CONFIG_PAYLOAD_* choice member is selected), coreboot's build can leave
-  # a previously-linked build/ramstage/.../ramstage.a on disk that Make
-  # treats as already up to date, silently omitting object files that only
-  # became relevant under the new config (real repro: with an already-
-  # populated build/ dir, CONFIG_PAYLOAD_FIT_SUPPORT flipped on but
-  # build/ramstage/lib/ramstage.a and build/ramstage/arch/arm64/ramstage.a
-  # both kept an older prerequisite list missing fit.o/fit_payload.o/
-  # fit_payload_arch, producing real linker "undefined reference" failures
-  # that only went away after manually deleting those two .a files and
-  # relinking). Forcing a clean build/ on every real rebuild (component
-  # marker/hash already skips this entirely when nothing changed) sidesteps
-  # the whole class of staleness rather than chasing which specific
-  # archives it hits next. NOT sufficient on its own, though — see the
-  # `olddefconfig` note below for the real, still-reproduced-after-this-fix
-  # failure that led to adding it too.
-  #
-  # A separate `make olddefconfig` between the printf and the parallel
-  # build — real, confirmed bug, found even with a guaranteed-clean build/
-  # (the fix above): coreboot's own Makefile has config.h's rule run
-  # `$(MAKE) olddefconfig` then `$(MAKE) syncconfig` as two nested
-  # recursive sub-makes, triggered lazily the first time something in the
-  # main `-j${JOBS}` invocation needs config.h. Confirmed for real with a
-  # freshly wiped build/: CONFIG_PAYLOAD_FIT_SUPPORT still ended up y in
-  # the final .config, but fit.c/fit_payload.c (both
-  # ramstage-$(CONFIG_PAYLOAD_FIT_SUPPORT)-gated) never appeared anywhere
-  # in the real build log's CC lines for ramstage/lib or
-  # ramstage/arch/arm64 — the object-list Makefile.mk files that decide
-  # what to compile get parsed against config state from earlier in that
-  # same parallel invocation, before the nested sub-make dance has fully
-  # settled. Running `olddefconfig` ourselves, single-threaded, as its own
-  # command between the printf and the `-j${JOBS}` build forces config.h/
-  # auto.conf to be fully resolved and stable on disk before any parallel
-  # compilation starts, so the real build never has to do that regeneration
-  # itself mid-flight.
+  # Explicit olddefconfig between the printf and the parallel build:
+  # coreboot's Makefile otherwise regenerates config.h/auto.conf lazily,
+  # mid-build, inside the main -j${JOBS} invocation — objects can get
+  # compiled against not-yet-settled config state. Running olddefconfig
+  # single-threaded first avoids that race.
   command: >-
     set -e;
     rm -rf build;

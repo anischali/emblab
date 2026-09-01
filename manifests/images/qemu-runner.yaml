@@ -1,48 +1,25 @@
 description: >
-  Runs the `qemu-system-*` binaries themselves, containerized (see ADR-012 —
-  supersedes ADR-003's host-exec decision). Shared by every target's `qemu:`
-  block: Debian's `qemu-system-arm` package provides both `qemu-system-arm`
-  and `qemu-system-aarch64`; `qemu-system-misc` provides `qemu-system-riscv64`
-  — covers every target that exists today (all are arm64 or riscv64).
-  `qemu-system-x86` (qemu-system-x86_64/-i386) is on top of that,
-  user-requested ahead of any target actually needing it yet. No
-  cross-toolchain here — this image never builds anything, it only runs the
-  emulator against artifacts already built by other components' images.
+  Runs the `qemu-system-*` binaries themselves, containerized (see
+  ADR-012). Shared by every target's `qemu:` block. No cross-toolchain
+  here — this image never builds anything, it only runs the emulator
+  against artifacts already built by other components' images.
 base_image: docker.io/library/debian:bookworm-slim
 provision:
-  # qemu-system-arm/-misc depend on libibverbs1 (RDMA live-migration support
-  # emblab never uses), whose postinst calls `addgroup`/`groupadd` to create
-  # the system 'rdma' group — real group/user creation genuinely fails under
-  # udocker's unprivileged execution (confirmed against default proot mode
-  # AND both its runc-backed modes, R1/R2: R1 can't setuid/setgid to any
-  # non-mapped uid in a single-uid rootless namespace; R2 bind-mounts the
-  # HOST's real /etc/group into the container for uid/gid consistency, so a
-  # write there is correctly refused — real root privilege genuinely isn't
-  # available in any of udocker's modes, by design). No functional loss:
-  # nothing emblab runs needs the 'rdma' group or any other system account
-  # to actually exist, so no-op stubs ahead of dpkg's postinst are enough.
+  # qemu-system-arm/-misc depend on libibverbs1 (RDMA live-migration
+  # support, unused here), whose postinst tries to create a system 'rdma'
+  # group — real group/user creation fails under udocker's unprivileged
+  # execution regardless of mode. No functional loss: nothing here needs
+  # that group, so no-op stubs ahead of dpkg's postinst are enough.
   - >-
     for n in groupadd useradd addgroup adduser; do
     printf '#!/bin/sh\nexit 0\n' > /usr/sbin/$n; chmod +x /usr/sbin/$n; done
   - apt-get update
-  # ipxe-qemu and seabios are both only Recommends of qemu-system-arm/-misc,
-  # so --no-install-recommends drops them — confirmed for real (apt-cache
-  # depends qemu-system-arm/-misc). ipxe-qemu ships the efi-*.rom/pxe-*.rom
-  # option ROMs under /usr/lib/ipxe/qemu/ — any virtio-pci device
-  # (confirmed for real: -device virtio-rng-pci, no networking involved)
-  # defaults its romfile property to "efi-virtio.rom", so without it QEMU
-  # refuses to even start: "failed to find romfile 'efi-virtio.rom'".
-  # seabios ships the vgabios-*.bin VGA BIOS blobs under
-  # /usr/share/seabios/ — confirmed for real (`qemu-system-aarch64 -L
-  # help`'s compiled-in search path lists /usr/share/seabios alongside
-  # /usr/share/qemu and /usr/lib/ipxe/qemu) it's the one that has
-  # vgabios-ramfb.bin, needed by any target's `-device ramfb` (UEFI's GOP
-  # framebuffer — every edk2/UEFI target here) or it fails the same way:
-  # "Could not open option rom 'vgabios-ramfb.bin'". qemu-system-data,
-  # tried first for both of the above, ships neither (confirmed for real
-  # via `dpkg -L` — just BIOS/sample-config files, no option ROMs or
-  # vgabios variants at all). Listed explicitly rather than dropping
-  # --no-install-recommends wholesale.
+  # ipxe-qemu and seabios are only Recommends of qemu-system-arm/-misc, so
+  # --no-install-recommends drops them — but without ipxe-qemu, any
+  # virtio-pci device makes QEMU refuse to start ("failed to find romfile
+  # 'efi-virtio.rom'"); without seabios, `-device ramfb` (UEFI's GOP
+  # framebuffer) fails the same way over vgabios-ramfb.bin. Listed
+  # explicitly rather than dropping --no-install-recommends wholesale.
   - >-
     apt-get install -y --no-install-recommends
     qemu-system-arm qemu-system-misc qemu-system-x86 ipxe-qemu seabios bash-completion

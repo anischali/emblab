@@ -1,16 +1,10 @@
 name: qemu-arm64-edk2-barebox
 description: >
-  Same boot flow as qemu-arm64-uefi-barebox (QEMU args transcribed
-  verbatim from barebox-arm64-poc/generate-fit's currently-active boot
-  invocation), except -bios is emblab's own freshly-built edk2
-  (ArmVirtQemu QEMU_EFI.fd) instead of the host's
-  /usr/share/edk2/aarch64/QEMU_EFI.silent.fd package. barebox is NOT
-  bundled inside the firmware volume — QEMU loads edk2 as -bios and
-  barebox as -kernel, two separate things, same as
-  qemu-arm64-uefi-barebox. A true bundled build (a custom BDS driver
-  finding barebox.efi embedded in the FV by GUID) needs real driver
-  source that doesn't exist anywhere in barebox-arm64-poc/edk to
-  transcribe — see edk2.yaml's description and CONTEXT.md.
+  Same boot flow as qemu-arm64-uefi-barebox, except -bios is emblab's own
+  freshly-built edk2 (ArmVirtQemu QEMU_EFI.fd) instead of a host package.
+  barebox is NOT bundled inside the firmware volume — QEMU loads edk2 as
+  -bios and barebox as -kernel, two separate things (see
+  qemu-arm64-edk2-fvbootdxe-barebox for the bundled variant).
 arch: arm64
 stack:
   - component: edk2
@@ -25,13 +19,10 @@ stack:
       - cmake
     vars:
       edk2_arch: AARCH64
-      # See qemu-arm64-edk2-fvbootdxe-barebox.yaml's comment: EDK2's own
-      # Build/<platform>-<arch> output directory uses a differently-cased
-      # "friendly" arch name than the -a flag/env var spelling above. The
-      # leading "-" is part of this var (not edk2.yaml's artifacts.fd
-      # template) so the same template also serves UefiPayloadPkg.dsc's
-      # differently-shaped, hyphen-less OUTPUT_DIRECTORY — see
-      # qemu-arm64-coreboot-barebox.yaml's edk2 stack entry.
+      # EDK2's own Build output directory uses a differently-cased
+      # "friendly" arch name than the -a flag/env var spelling above; the
+      # leading "-" is part of this var, not edk2.yaml's artifacts.fd
+      # template (see edk2.yaml).
       edk2_build_arch: "-AArch64"
   - component: barebox
     image: gnu-aarch64

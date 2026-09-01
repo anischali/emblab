@@ -1,77 +1,17 @@
 name: qemu-arm64-coreboot-barebox
 description: >
-  ARCHITECTURE CHANGED, NOT YET BOOTING — this target previously bundled
-  barebox's own FIT output directly as coreboot's CBFS payload and was
-  confirmed booting for real (see CONTEXT.md's Proven history for that
-  full story — four earlier payload-format attempts, the last of which
-  worked end to end). Per explicit direction, it now instead follows the
-  "real UEFI firmware between coreboot and the final payload" shape:
-  coreboot's CBFS payload is a real AArch64 build of edk2's
-  UefiPayloadPkg (this project's own edk2 component, ${edk2.fd} below —
-  NOT coreboot's own payloads/external/edk2/Makefile, confirmed for real
-  to hardcode -a IA32/-D BUILD_ARCH=X64 with no AARCH64 codepath at all
-  despite Kconfig.name nominally allowing selection on ARCH_ARM64), which
-  is then meant to boot barebox as a completely normal UEFI application —
-  barebox is now built with CONFIG_EFI_PAYLOAD_ESP_IMAGE (esp.cfg, see
-  barebox.yaml) into a real bootable GPT/FAT disk image
-  (images/barebox.esp) with barebox.efi at the standard removable-media
-  path EFI/BOOT/BOOTAA64.EFI, attached to QEMU as a virtio-blk drive
-  below — UefiPayloadPkg.dsc's own AARCH64 component list already
-  includes VirtioBlkDxe/PartitionDxe/FatPkg/BdsDxe, confirmed by reading
-  the dsc, so no custom driver/patch is needed for it to find and boot
-  that image the standard way.
-
-  Two real, confirmed-and-fixed bugs getting UefiPayloadPkg this far: (1)
-  UefiPayloadPkg.fdf's own DEFINE FD_BASE = 0x00800000 default (also
-  UefiPayloadPkgTokenSpaceGuid.PcdPayloadFdMemBase) is an x86 assumption
-  — confirmed for real to fail on this board with cbfstool own SELF
-  loader refusing the payload ("SELF segment doesn't target RAM:
-  0x00800000"), since real RAM here only starts at 0x40000000; fixed by
-  overriding it to 0x48000000 via the edk2 stack entry's build_macros
-  below. (2) payloads/Kconfig own payload-compression choice defaults to
-  COMPRESSED_PAYLOAD_NONE only when PAYLOAD_FIT_SUPPORT is selected
-  (which barebox own former CONFIG_PAYLOAD_FIT payload got automatically
-  but CONFIG_PAYLOAD_ELF below does not) — confirmed by reading
-  payloads/Kconfig directly; fixed by explicitly setting
-  CONFIG_COMPRESSED_PAYLOAD_NONE=y. Neither fix resolved the actual
-  remaining blocker, see below.
-
-  CONFIG_PAYLOAD_ELF (not CONFIG_PAYLOAD_EDK2/CONFIG_EDK2_UEFIPAYLOAD, for
-  the AARCH64-Makefile reason above) works here despite its name: reading
-  util/cbfstool/cbfstool.c confirms add-payload's cbfstool_convert_mkpayload
-  tries ELF, then FIT, then a raw UEFI firmware volume
-  (parse_fv_to_payload) before giving up, and the real
-  UEFIPAYLOAD.fd built here is a raw FV (confirmed via od: FVH signature
-  at file offset 0x28, no ELF magic at all) — so it is picked up by the
-  same generic cbfs "payload" type barebox own former FIT payload used,
-  via the FV fallback path specifically.
-
-  **STILL NOT BOOTING, real and unresolved**: `emblab build` succeeds and
-  a real boot log confirms the payload segment loads correctly
-  (uncompressed, dstaddr 0x48000000 matching FD_BASE, entry point
-  0x4800321c) and BL31 hands off cleanly (coreboot own bl31.c always
-  enters any payload at EL2, unconditionally, confirmed by reading
-  src/arch/arm64/boot.c — the same path barebox own FIT payload already
-  booted through successfully, so EL2 entry itself is not the problem) —
-  but there is zero further console output at all past that handoff, and
-  a QEMU boot up to 60s produces nothing more (still running, not
-  crashed/exited — confirmed via timeout). x0 on entry is
-  0x7ffdc000, matching where coreboot own log says it wrote its handoff
-  table, and UefiPayloadPkg.dsc resolves BlParseLib to
-  UefiPayloadPkg/Library/CbParseLib for BOOTLOADER=COREBOOT, so the
-  handoff convention itself looks architecturally correct by inspection —
-  the actual cause has not been isolated yet (needs either a QEMU
-  gdbstub-attached session to see real register/PC state, or an early raw
-  MMIO UART poke patched directly into UefiPayloadEntry.c to bisect how
-  far real execution gets before whatever is silencing it).
+  Bundles barebox's own FIT output directly as coreboot's CBFS payload
+  (CONFIG_PAYLOAD_FIT), booting real coreboot -> barebox with no UEFI layer
+  in between. coreboot's MAINBOARD_VENDOR/MAINBOARD_PART_NUMBER are
+  overridden to "linux"/"dummy-virt" to match the compat string barebox's
+  bundled device tree advertises, so coreboot's FIT config-selection logic
+  picks the right one.
 arch: arm64
 stack:
   - component: barebox
     image: gnu-aarch64
     # python3-libfdt: scripts/make_fit.py (`import libfdt`) needs it to
-    # build images/barebox-arm64.fit — gnu-aarch64's baseline provisioning
-    # has python3 but not this binding, confirmed by grepping its own
-    # provision: apt-get list.
+    # build images/barebox-arm64.fit.
     builddeps:
       - python3-libfdt
       - dosfstools
@@ -81,25 +21,16 @@ stack:
       defconfig: multi_v8_defconfig
       arch: arm64
       extra_conf: |
-        CONFIG_GENERIC_DT_F=y
+        CONFIG_BOARD_GENERIC_FIT=y
 
   - component: coreboot
-    # coreboot-sdk ships a prebuilt cross-toolchain (GCC 14.2.0, confirmed
-    # real — see coreboot.yaml's Toolchain paragraph) instead of gnu-aarch64's
-    # stock GCC 12.2.0, which can't build coreboot's -std=gnu23 main at all.
-    # No builddeps needed here any more: no from-source crossgcc build means
-    # no texinfo/libgmp-dev/.../gnat-12/ccache — confirmed by a real,
-    # complete build with none declared.
+    # coreboot-sdk ships a prebuilt cross-toolchain (see coreboot.yaml) —
+    # no builddeps needed here, no from-source crossgcc build.
     image: coreboot-sdk
     vars:
       extra_conf: |
         CONFIG_VENDOR_EMULATION=y
         CONFIG_BOARD_EMULATION_QEMU_AARCH64=y
-        ## CONFIG_PAYLOAD_NONE is not set
-        ## CONFIG_PAYLOAD_EDK2=y
-        ## CONFIG_EDK2_UEFIPAYLOAD=y
-        ## CONFIG_COMPRESSED_PAYLOAD_LZMA=y
-        ## CONFIG_EDK2_CUSTOM_BUILD_PARAMS="-D FD_BASE=0x48000000"
         CONFIG_PAYLOAD_FIT=y
         CONFIG_COMPRESSED_PAYLOAD_NONE=y
         CONFIG_PAYLOAD_FILE="${barebox.images}/barebox-dt-2nd.img"

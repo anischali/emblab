@@ -1,9 +1,6 @@
 name: optee-os
 description: >
-  OP-TEE trusted OS core. Build flags transcribed verbatim from
-  barebox-arm64-poc/build.sh (a proven, working invocation for
-  vexpress-qemu_armv8a). Ref pinned to 'master' for now — pin an exact tag
-  once validated end-to-end (see CONTEXT.md).
+  OP-TEE trusted OS core, PLATFORM=vexpress-qemu_armv8a.
 source:
   git: https://github.com/OP-TEE/optee_os.git
   ref: master

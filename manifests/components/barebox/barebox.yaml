@@ -1,73 +1,39 @@
 name: barebox
 description: >
-  VERIFIED: `emblab build qemu-arm64-uefi-barebox` has completed for real
-  against this exact source/command/defconfig, producing a genuine
-  barebox-dt-2nd.img — see CONTEXT.md's Proven section. `emblab run
-  qemu-arm64-uefi-barebox` (actually booting it) is still unconfirmed.
-  efi_v8_defconfig was chosen over the originally-guessed
-  vexpress_v8_defconfig once real building started; barebox-arm64-poc
-  itself never invoked a barebox `make`/defconfig step directly — only its
-  *output path* is transcribed from there, as
-  ../barebox/images/barebox-dt-2nd.img in build.sh's BL33= argument.
-  barebox-dt-2nd.img isn't arm64-specific despite the transcription
-  history above — it's produced by the arch-agnostic BOARD_GENERIC_DT
-  Kconfig option (riscv64's CONFIG_SOC_VIRT selects it too, its own help
-  text says so verbatim: "Generates an image that can be booted by QEMU").
+  Builds barebox for QEMU AArch64 (efi_v8_defconfig), producing
+  barebox-dt-2nd.img among other files under images/. Not arm64-specific
+  despite the name — riscv64's CONFIG_SOC_VIRT selects the same
+  arch-agnostic BOARD_GENERIC_DT Kconfig option.
 source:
   git: https://github.com/barebox/barebox.git
   ref: master
   path: barebox
 build:
-  # esp.cfg turns on CONFIG_EFI_PAYLOAD_ESP_IMAGE (efi/payload/Kconfig),
-  # producing a real bootable GPT/FAT disk image (images/barebox.esp,
-  # via scripts/mkesp wrapping scripts/mkvfat) with barebox's own EFI
-  # stub placed at the standard UEFI removable-media path
-  # (EFI/BOOT/BOOTAA64.EFI, efi/Kconfig's PcdEfiPayloadDefaultPath
-  # default) — any spec-compliant UEFI firmware's own Boot Manager
-  # auto-discovers and boots it with no custom driver code, used by
-  # qemu-arm64-coreboot-barebox to let its UefiPayloadPkg firmware boot
-  # barebox off a virtio-blk-attached copy of this image. Always copied
-  # in via build.files (ADR-005/007), only merged when a target's
-  # extra_conf opts in.
+  # esp.cfg turns on CONFIG_EFI_PAYLOAD_ESP_IMAGE, producing a bootable
+  # GPT/FAT disk image (images/barebox.esp) with barebox's EFI stub at the
+  # standard UEFI removable-media path — any UEFI firmware boots it with
+  # no custom driver. Always copied in via build.files; only merged in
+  # when a target's extra_conf_file opts in.
   files:
     - esp.cfg
-  # vars.arch has no default here — arch is a target concern, not a
-  # component one (see ADR-009); every target's stack entry for barebox
-  # must set it. $CROSS_COMPILE (unbraced) is a real shell env var, set by
-  # whichever image the target picks — NOT an emblab ${...} template token
-  # (those only resolve vars./env.JOBS/env.WORKSPACE/<component>.<artifact>;
-  # see templating.py's default_env()). ARCH is a var, not a real env var:
-  # some upstream build systems (OP-TEE's, for one) read ARCH from the
-  # environment and default it internally even when their own command
-  # never mentions it, so a real env var would leak into builds that never
-  # asked for it — see ADR-006/ADR-009.
+  # vars.arch has no default — every target's stack entry must set it
+  # (components stay arch-agnostic, see ADR-009). ARCH is a var, not a
+  # real env var, since some build systems (OP-TEE's) default it
+  # internally and a real env var would leak into builds that never asked
+  # for it. $CROSS_COMPILE (unbraced) is a real shell env var set by the
+  # target's image, not an emblab ${...} token.
   vars:
     defconfig: efi_v8_defconfig
-    # extra_conf: individual literal Kconfig lines (e.g. "CONFIG_FOO=y") a
-    # target wants appended straight onto .config — a plain multi-line
-    # string (a YAML list of strings also works, same result: templating.
-    # resolve_value joins either shape with newlines before it reaches
-    # build.command). The block-scalar string is the more ergonomic of the
-    # two here since a "# CONFIG_X is not set" line needs no quoting in a
-    # `|` block (YAML never reads `#` as a comment start inside one),
-    # unlike a plain-scalar list item where it would. Fine for independent
-    # bools/tristates; a Kconfig *choice* group needs its disabling
-    # "# CONFIG_X is not set" lines spelled out explicitly too (see
-    # coreboot.yaml's own extra_conf for a real example of that). No
-    # apostrophes in any line — this lands inside build.command's single-
-    # quoted printf below, and single quotes have no escape mechanism in
-    # POSIX shell. Empty by default.
+    # Individual literal Kconfig lines appended straight onto .config —
+    # a plain multi-line string (a YAML list also works; both are joined
+    # the same way by templating.resolve_value). A Kconfig *choice* group
+    # needs its other members' disabling "# CONFIG_X is not set" lines
+    # spelled out too (see coreboot.yaml for an example). No literal `'`
+    # in any line — this is substituted into a single-quoted shell string
+    # in build.command. Empty by default.
     extra_conf: ""
-    # extra_conf_file: one or more actual Kconfig fragment files, merged
-    # via barebox's own scripts/kconfig/merge_config.sh -m (space-separated
-    # if more than one) — e.g. "${fit-image.files}/keystore.cfg". The right
-    # tool for a Kconfig *choice* group, where a raw appended line isn't
-    # enough on its own. Same conditionally-populated-var trick as
-    # tf-a.yaml's bl32_flags/edk2.yaml's fv_boot_app_flag. Merged with `-m`
-    # (merge only, no immediate make invocation); the following real build
-    # already re-syncs .config on its own via Kbuild's normal auto.conf
-    # dependency, so no extra oldconfig/olddefconfig step is needed for
-    # either mechanism. Empty by default.
+    # One or more Kconfig fragment files, merged via merge_config.sh -m —
+    # e.g. "${fit-image.files}/keystore.cfg". Empty by default.
     extra_conf_file: ""
   command: >-
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
@@ -75,19 +41,10 @@ build:
     printf '%s\n' '${vars.extra_conf}' >> .config &&
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS}
 artifacts:
-  # barebox's build drops several files into images/ (barebox-dt-2nd.img
-  # among them); which one a given target cares about is that target's
-  # concern, not this component's — see ADR-006. The whole directory is
-  # declared as one artifact and copied as-is (build.py copies a directory
-  # artifact with copytree instead of copy2); a target picks a file out of
-  # it with e.g. ${barebox.images}/barebox-dt-2nd.img.
+  # barebox drops several files into images/; which one a target wants is
+  # that target's concern (e.g. ${barebox.images}/barebox-dt-2nd.img).
   images: images/
-  # The top-level Kbuild output, before any arch-specific post-processing
-  # turns it into a flat images/barebox-*.img — confirmed for real (`file`
-  # on a real build's output): "ELF 64-bit LSB pie executable, ARM aarch64
-  # ... static-pie linked", i.e. a genuine ET_DYN ELF, unlike
-  # images/barebox-dt-2nd.img (raw machine code, no ELF header at all).
-  # Needed by e.g. qemu-arm64-coreboot-barebox's CONFIG_PAYLOAD_ELF, which
-  # parses its CONFIG_PAYLOAD_FILE as ELF and misreads a flat binary as one
-  # (real, confirmed failure: "SELF segment doesn't target RAM").
+  # The top-level Kbuild output — a genuine ET_DYN ELF, unlike
+  # images/barebox-dt-2nd.img (raw machine code, no ELF header). Needed by
+  # payload mechanisms that parse their input as ELF.
   elf: barebox
