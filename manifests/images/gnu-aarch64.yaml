@@ -15,7 +15,7 @@ provision:
     device-tree-compiler bison flex libssl-dev pkg-config bc rsync unzip
     gcc-aarch64-linux-gnu g++-aarch64-linux-gnu gcc-arm-linux-gnueabi
     meson ninja-build libglib2.0-dev lz4 python3-cryptography bash-completion
-    libncurses-dev
+    libncurses-dev python3-libfdt python3-pefile libpython3-dev
 env:
   CROSS_COMPILE: aarch64-linux-gnu-
   CROSS_COMPILE32: arm-linux-gnu-
