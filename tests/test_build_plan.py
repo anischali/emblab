@@ -717,16 +717,70 @@ def test_shell_context_defaults_to_last_stack_entry_and_rejects_unknown_componen
          patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
          patch("emblab.build.containers.ensure_image", return_value=None), \
          patch("emblab.build.containers.ensure_builddeps", return_value=None):
-        image, src_dir = build_mod.shell_context("shell-target", tmp_path)
+        image, src_dir, shell_env = build_mod.shell_context("shell-target", tmp_path)
         assert image.name == "img-b"
         assert src_dir == tmp_path / "src" / "second"
+        assert shell_env == {}
 
-        image, src_dir = build_mod.shell_context("shell-target", tmp_path, "first")
+        image, src_dir, shell_env = build_mod.shell_context("shell-target", tmp_path, "first")
         assert image.name == "img-a"
         assert src_dir == tmp_path / "src" / "first"
+        assert shell_env == {}
 
         with pytest.raises(BuildError):
             build_mod.shell_context("shell-target", tmp_path, "nonexistent")
+
+
+def test_shell_context_runs_config_command_and_exports_arch(tmp_path, monkeypatch):
+    """A component with build.config_command (e.g. barebox/coreboot/
+    linux-kernel/u-boot's defconfig+extra_conf(_file) step) gets it
+    rendered and run unconditionally when entering a --component shell,
+    and vars.arch (if the stack entry sets one) comes back as an ARCH
+    override for containers.shell() to export."""
+    manifests_dir = tmp_path / "manifests"
+    (manifests_dir / "images").mkdir(parents=True)
+    (manifests_dir / "components" / "kconfiggy").mkdir(parents=True)
+    (manifests_dir / "images" / "img-a.yaml").write_text("base_image: a\nprovision: []\n")
+    (manifests_dir / "components" / "kconfiggy" / "kconfiggy.yaml").write_text(
+        "build:\n"
+        "  vars:\n"
+        "    defconfig: defconfig\n"
+        "  config_command: make ARCH=${vars.arch} ${vars.defconfig}\n"
+        "  command: make ARCH=${vars.arch} ${vars.defconfig} && make ARCH=${vars.arch}\n"
+        "artifacts:\n  out: out.txt\n"
+    )
+    monkeypatch.setattr(manifests, "MANIFESTS_DIR", manifests_dir)
+
+    target = manifests.Target(
+        name="shell-target",
+        description="",
+        arch="fake",
+        stack=[
+            manifests.StackEntry(
+                component="kconfiggy", vars={"arch": "arm64"}, image="img-a", builddeps=[], patches=[]
+            ),
+        ],
+        qemu=manifests.Qemu(binary="true", args=[], image="img-a"),
+    )
+
+    def fake_ensure_source(workspace, component, patches, **kwargs):
+        return Path(workspace) / "src" / component.name
+
+    run_calls = []
+
+    def fake_run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, log=print):
+        run_calls.append(command)
+
+    with patch("emblab.build.manifests.load_target", return_value=target), \
+         patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
+         patch("emblab.build.containers.ensure_image", return_value=None), \
+         patch("emblab.build.containers.ensure_builddeps", return_value=None), \
+         patch("emblab.build.containers.run", side_effect=fake_run):
+        image, src_dir, shell_env = build_mod.shell_context("shell-target", tmp_path, "kconfiggy")
+
+    assert shell_env == {"ARCH": "arm64"}
+    assert len(run_calls) == 1
+    assert run_calls[0] == ["sh", "-c", "make ARCH=arm64 defconfig"]
 
 
 def test_target_arch_resolves_as_env_arch_template_token(tmp_path, monkeypatch):

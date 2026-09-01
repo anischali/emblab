@@ -69,8 +69,14 @@ def cmd_run(args):
 
 def cmd_shell(args):
     if manifests.target_path(args.name).exists():
-        image, src_dir = build_mod.shell_context(args.name, WORKSPACE, args.component)
-        containers.shell(image, WORKSPACE, workdir=str(src_dir), bind_mounts=[(str(WORKSPACE), str(WORKSPACE))])
+        image, src_dir, shell_env = build_mod.shell_context(args.name, WORKSPACE, args.component)
+        containers.shell(
+            image,
+            WORKSPACE,
+            workdir=str(src_dir),
+            bind_mounts=[(str(WORKSPACE), str(WORKSPACE))],
+            extra_env=shell_env,
+        )
         return
 
     if args.component:

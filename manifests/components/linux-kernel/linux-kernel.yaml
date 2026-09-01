@@ -21,6 +21,14 @@ build:
     # string (a YAML list also works, same result). No literal `'` in any
     # line (single-quoted printf below). Empty by default.
     extra_conf: ""
+  # Split out so `emblab shell --component` can apply just the config step
+  # (see build.shell_context()) without running the actual build.
+  config_command: >-
+    set -e;
+    make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig};
+    ./scripts/kconfig/merge_config.sh -m .config ${vars.extra_conf_file};
+    printf '%s\n' '${vars.extra_conf}' >> .config;
+    make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE olddefconfig
   command: >-
     set -e;
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig};

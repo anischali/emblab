@@ -46,6 +46,12 @@ class Build:
     vars: dict
     files: list  # filenames, each backed by manifests/components/<component>/files/<filename>
     patches: list  # filenames (same files/ dir), git-applied in order onto a fresh clone
+    # optional defconfig/extra_conf(_file)-only step, run unconditionally
+    # (not marker-tracked) by `emblab shell --component` before dropping
+    # into the shell, so the source tree's .config matches what a real
+    # build would produce; "" = none. Never run by build() itself — that
+    # config setup is already inlined at the front of `command`.
+    config_command: str = ""
 
 
 @dataclasses.dataclass
@@ -265,6 +271,7 @@ def load_component(name):
     build = Build(
         command=_require(build_data, "command", path),
         setup=build_data.get("setup", ""),
+        config_command=build_data.get("config_command", ""),
         vars=build_vars,
         files=build_files,
         patches=build_patches,

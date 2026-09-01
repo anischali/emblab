@@ -139,13 +139,22 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
 def shell_context(target_name, workspace, component_name=None, *, log=print):
     """Resolve what `emblab shell <target>` needs for a devshell matching a
     real component build environment: which image (a component has none of
-    its own — ADR-009), and which source directory to start in. Reuses the
-    exact same ensure_image/ensure_builddeps/ensure_source calls build()
-    makes for that component, so the shell sees the same provisioned image
-    and installed builddeps a real build would — just without rendering or
-    running build.setup/build.command. Defaults to the target's last stack
-    entry (whatever you're most likely mid-iteration on) when
-    component_name isn't given.
+    its own — ADR-009), which source directory to start in, and which env
+    vars to export into the shell. Reuses the exact same
+    ensure_image/ensure_builddeps/ensure_source calls build() makes for
+    that component, so the shell sees the same provisioned image and
+    installed builddeps a real build would — just without rendering or
+    running build.command. Defaults to the target's last stack entry
+    (whatever you're most likely mid-iteration on) when component_name
+    isn't given.
+
+    Unlike build(), this also (unconditionally, not marker-tracked): runs
+    the component's build.config_command if it has one — the defconfig/
+    extra_conf(_file)-only portion of a Kconfig-based component's build,
+    e.g. barebox/coreboot/linux-kernel/u-boot — so the source tree's
+    .config is ready for interactive poking; and returns ARCH/CROSS_COMPILE
+    (when resolvable) alongside the image's own env, for containers.shell()
+    to export into the interactive session.
     """
     target = manifests.load_target(target_name)
     entries_by_component = {entry.component: entry for entry in target.stack}
@@ -164,4 +173,50 @@ def shell_context(target_name, workspace, component_name=None, *, log=print):
     containers.ensure_builddeps(image, component_name, entry.builddeps, workspace, log=log)
     src_dir = sources.ensure_source(workspace, component, merged_patches, log=log)
 
-    return image, src_dir
+    env = templating.default_env(workspace, target.arch)
+
+    # A component's own vars (e.g. coreboot's extra_conf embedding
+    # ${barebox.images}) may reference a sibling's already-built artifact —
+    # pick up whichever stack entries have one on disk already, same as
+    # build() does progressively; a sibling that hasn't been built yet
+    # still raises the normal, clear TemplateError.
+    artifacts_by_component = {}
+    for other_name in entries_by_component:
+        if other_name == component_name:
+            continue
+        other_component = manifests.load_component(other_name)
+        if state.artifacts_exist(workspace, target.name, other_name, other_component.artifacts):
+            artifacts_by_component[other_name] = state.artifact_paths(
+                workspace, target.name, other_name, other_component.artifacts
+            )
+
+    merged_vars = {**component.build.vars, **entry.vars}
+    resolved_vars = templating.resolve_vars(merged_vars, env=env, artifacts=artifacts_by_component)
+
+    if component.build.config_command:
+        # Same static files build() copies in ahead of build.command (e.g.
+        # coreboot's configs/config.emblab_qemu_aarch64, barebox's
+        # esp.cfg) — config_command needs them present the same way.
+        for filename in component.build.files:
+            file_src = manifests.component_file_path(component_name, filename)
+            shutil.copy2(file_src, src_dir / filename)
+
+        rendered_config = templating.render_command(
+            component.build.config_command, resolved_vars=resolved_vars, env=env
+        )
+        containers.run(
+            image,
+            workspace,
+            command=["sh", "-c", rendered_config],
+            workdir=str(src_dir),
+            bind_mounts=[(env["WORKSPACE"], env["WORKSPACE"])],
+            log=log,
+        )
+
+    # CROSS_COMPILE is already exported by containers.shell() from the
+    # image's own env: block (see e.g. gnu-aarch64.yaml) — only ARCH needs
+    # to come from here, since it's a resolved stack-entry var, not
+    # something an image itself knows.
+    shell_env = {"ARCH": resolved_vars["arch"]} if "arch" in resolved_vars else {}
+
+    return image, src_dir, shell_env

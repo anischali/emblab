@@ -35,6 +35,12 @@ build:
     # One or more Kconfig fragment files, merged via merge_config.sh -m —
     # e.g. "${fit-image.files}/keystore.cfg". Empty by default.
     extra_conf_file: ""
+  # Split out so `emblab shell --component` can apply just the config step
+  # (see build.shell_context()) without running the actual build.
+  config_command: >-
+    make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
+    if [ -n "${vars.extra_conf_file}" ]; then ./scripts/kconfig/merge_config.sh -m .config ${vars.extra_conf_file}; fi &&
+    printf '%s\n' '${vars.extra_conf}' >> .config
   command: >-
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
     if [ -n "${vars.extra_conf_file}" ]; then ./scripts/kconfig/merge_config.sh -m .config ${vars.extra_conf_file}; fi &&

@@ -139,7 +139,7 @@ def run(image, workspace, *, command, workdir, bind_mounts=(), extra_env=None, c
     return _udocker(args, workspace, check=check)
 
 
-def shell(image, workspace, *, workdir="/", bind_mounts=(), log=print):
+def shell(image, workspace, *, workdir="/", bind_mounts=(), extra_env=None, log=print):
     """Interactive shell inside the provisioned container, for debugging a
     build (or, via build.py's shell_context(), a component's real build
     environment) by hand.
@@ -164,7 +164,9 @@ def shell(image, workspace, *, workdir="/", bind_mounts=(), log=print):
     function ever got registered.
 
     Same helpers/ bind mount as run() — fitkeys-ctl, tsa-stamp, etc. are on
-    PATH here too."""
+    PATH here too. extra_env (e.g. build.py's shell_context() resolving
+    ARCH/CROSS_COMPILE for a --component shell) is merged on top of the
+    image's own env: block, same precedence as run()."""
     args = [
         "run",
         "--hostauth",
@@ -173,6 +175,8 @@ def shell(image, workspace, *, workdir="/", bind_mounts=(), log=print):
     ]
     for host_path, container_path in bind_mounts:
         args.append(f"--volume={host_path}:{container_path}")
+    for key, value in {**image.env, **(extra_env or {})}.items():
+        args.append(f"--env={key}={value}")
     args.append(f"--workdir={workdir}")
     args.append(container_name(image))
     args.extend(_with_helpers_path(["bash", "--rcfile", f"{HELPERS_MOUNT}/emblab-shell.bashrc", "-i"]))

@@ -68,6 +68,15 @@ build:
   # mid-build, inside the main -j${JOBS} invocation — objects can get
   # compiled against not-yet-settled config state. Running olddefconfig
   # single-threaded first avoids that race.
+  # Split out so `emblab shell --component` can apply just the config step
+  # (see build.shell_context()) without running the actual build.
+  config_command: >-
+    set -e;
+    rm -rf build;
+    make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ HOSTCC=/opt/xgcc/bin/clang HOSTCXX=/opt/xgcc/bin/clang++ KBUILD_DEFCONFIG=${vars.defconfig} defconfig;
+    if [ -n "${vars.extra_conf_file}" ]; then ./scripts/kconfig/merge_config.sh -m .config ${vars.extra_conf_file}; fi;
+    printf '%s\n' '${vars.extra_conf}' >> .config;
+    make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ HOSTCC=/opt/xgcc/bin/clang HOSTCXX=/opt/xgcc/bin/clang++ olddefconfig
   command: >-
     set -e;
     rm -rf build;
