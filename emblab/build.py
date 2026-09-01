@@ -2,13 +2,14 @@
 
 resolve target -> topo-sort its stack -> for each component in order:
 ensure the *stack entry's* declared image is provisioned (a component has
-no image of its own — see ADR-009), ensure its source is fetched, resolve
-its vars (which may reference already-built sibling artifacts), install the
-stack entry's builddeps (idempotent, so safe ahead of both steps below),
-run its optional build.setup step if present (tracked/forced independently
-of the build step — see ADR-011), then skip the build step if unchanged,
-else render its build command and run it in-container, then collect its
-declared artifacts onto the host.
+no image of its own — see ADR-009), ensure its source is fetched (--force
+re-clones from scratch, submodules included — same as `emblab reset
+--reclone`), resolve its vars (which may reference already-built sibling
+artifacts), install the stack entry's builddeps (idempotent, so safe ahead
+of both steps below), run its optional build.setup step if present
+(tracked/forced independently of the build step — see ADR-011), then skip
+the build step if unchanged, else render its build command and run it
+in-container, then collect its declared artifacts onto the host.
 """
 
 import shutil
@@ -46,7 +47,13 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
         merged_patches = list(component.build.patches) + list(entry.patches)
 
         containers.ensure_image(image, workspace, log=log)
-        src_dir = sources.ensure_source(workspace, component, merged_patches, log=log)
+        # force=force: `emblab build --force` re-clones from scratch (full
+        # git submodule re-init included, not just a re-run of build.command)
+        # — ensure_source's own force=True path already does exactly this
+        # (same one `emblab reset --reclone` uses to guarantee a pristine
+        # tree); a component under manual edit is unaffected regardless,
+        # since ensure_source checks that marker before force (see there).
+        src_dir = sources.ensure_source(workspace, component, merged_patches, log=log, force=force)
         under_manual_edit = sources.is_modified(workspace, component)
 
         # FILES: the absolute path build.files get copied into (this

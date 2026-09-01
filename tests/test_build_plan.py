@@ -161,6 +161,38 @@ def test_build_plan_skips_unchanged_component_on_second_run(tmp_path, monkeypatc
     assert second_run_count == first_run_count  # nothing rebuilt on the second, unchanged run
 
 
+def test_build_force_propagates_to_ensure_source(tmp_path, monkeypatch):
+    """`emblab build --force` re-clones from scratch (submodules included),
+    not just re-runs build.command — ensure_source's own force=True path is
+    what already does that (same one `emblab reset --reclone` uses); build()
+    just needs to actually pass its own `force` argument through, which it
+    didn't before this test was added."""
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+
+    target_name = "qemu-arm64-uefi-barebox"
+    target = manifests.load_target(target_name)
+    for entry in target.stack:
+        component = manifests.load_component(entry.component)
+        _precreate_source_and_artifacts(tmp_path, component, entry)
+
+    ensure_source_calls = []
+
+    def fake_ensure_source(workspace, component, patches, **kwargs):
+        ensure_source_calls.append((component.name, kwargs.get("force")))
+        return Path(workspace) / "src" / component.source.path
+
+    with patch("emblab.build.sources.ensure_source", side_effect=fake_ensure_source), \
+         patch("emblab.build.containers.ensure_image", return_value=None), \
+         patch("emblab.build.containers.run", return_value=None):
+        build_mod.build(target_name, tmp_path)
+        build_mod.build(target_name, tmp_path, force=True)
+
+    not_forced = [name for name, force in ensure_source_calls[:len(target.stack)] if force]
+    forced = [name for name, force in ensure_source_calls[len(target.stack):] if not force]
+    assert not not_forced
+    assert not forced
+
+
 def test_build_plan_reruns_and_does_not_reoverwrite_files_when_source_under_manual_edit(tmp_path, monkeypatch):
     """component_hash() never hashes actual source tree content (only ref +
     resolved vars + patches — see sources.is_modified's docstring), so a
