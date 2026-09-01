@@ -132,17 +132,21 @@ def _parse_submodules(value, path):
 
 
 def _check_var_type(value, *, where):
-    """A var's value must be a plain string, or a list of plain strings
-    (e.g. `extra_conf`'s individual Kconfig lines, joined with newlines at
-    resolve time — see templating.resolve_value) — anything else can't be
-    rendered into a build.command."""
+    """A var's value must be a plain string, a list of plain strings (e.g.
+    `extra_conf`'s individual Kconfig lines, joined with newlines at resolve
+    time), or a plain bool (normalized to the same empty-string/non-empty
+    convention every conditionally-populated var already uses — see
+    templating.resolve_value) — anything else can't be rendered into a
+    build.command."""
+    if isinstance(value, bool):
+        return
     if isinstance(value, str):
         return
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         return
     raise ManifestError(
-        f"{where}: var value must be a string or a list of strings, "
-        f"got {type(value).__name__}"
+        f"{where}: var value must be a string, a list of strings, or a "
+        f"bool, got {type(value).__name__}"
     )
 
 

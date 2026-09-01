@@ -88,6 +88,13 @@ def resolve_value(value, *, merged_vars, env, artifacts):
             resolve_value(item, merged_vars=merged_vars, env=env, artifacts=artifacts)
             for item in value
         )
+    if isinstance(value, bool):
+        # Normalized to the same empty-string/non-empty-string convention
+        # every conditionally-populated var already uses (e.g.
+        # fv_boot_app_flag) — so `if [ -n "${vars.x}" ]` in a build.command
+        # keeps working whether a manifest spells "on" as a real YAML bool
+        # or a non-empty string.
+        return "true" if value else ""
     if not isinstance(value, str):
         return value
 
