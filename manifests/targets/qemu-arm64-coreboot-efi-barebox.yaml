@@ -1,0 +1,56 @@
+name: qemu-arm64-coreboot-barebox
+description: >
+  Bundles barebox's own FIT output directly as coreboot's CBFS payload
+  (CONFIG_PAYLOAD_FIT), booting real coreboot -> barebox with no UEFI layer
+  in between. coreboot's MAINBOARD_VENDOR/MAINBOARD_PART_NUMBER are
+  overridden to "linux"/"dummy-virt" to match the compat string barebox's
+  bundled device tree advertises, so coreboot's FIT config-selection logic
+  picks the right one.
+arch: arm64
+stack:
+  - component: barebox
+    image: gnu-aarch64
+    # python3-libfdt: scripts/make_fit.py (`import libfdt`) needs it to
+    # build images/barebox-arm64.fit.
+    builddeps:
+      - python3-libfdt
+      - dosfstools
+      - mtools
+      - fdisk
+    vars:
+      defconfig: efi_v8_defconfig
+      arch: arm64
+      extra_conf: |
+        CONFIG_CONSOLE_ACTIVATE_ALL=y
+        CONFIG_EFI_PAYLOAD_ESP_IMAGE=y
+
+  - component: coreboot
+    # coreboot-sdk ships a prebuilt cross-toolchain (see coreboot.yaml) —
+    # no builddeps needed here, no from-source crossgcc build.
+    image: coreboot-sdk
+    vars:
+      extra_conf: |
+        CONFIG_VENDOR_EMULATION=y
+        CONFIG_BOARD_EMULATION_QEMU_AARCH64=y
+        # CONFIG_PAYLOAD_NONE is not set
+        CONFIG_PAYLOAD_EDK2=y
+        CONFIG_EDK2_UNIVERSAL_PAYLOAD=y
+        CONFIG_EDK2_CUSTOM_BUILD_PARAMS="--pcd gUefiPayloadPkgTokenSpaceGuid.PcdHandOffFdtEnable=FALSE"
+
+qemu:
+  binary: qemu-system-aarch64
+  image: qemu-runner
+  args:
+    - "-cpu"
+    - "cortex-a57"
+    - "-M"
+    - "virt,acpi=off,secure=on,virtualization=on"
+    - "-m"
+    - "1G"
+    - "-nographic"
+    - "-device"
+    - "virtio-rng-pci"
+    - "-bios"
+    - "${coreboot.rom}"
+    - "-drive"
+    - "if=none,file=${barebox.images}/barebox.esp,format=raw,readonly=on"

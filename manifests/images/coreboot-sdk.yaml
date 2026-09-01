@@ -19,6 +19,5 @@ provision:
     s/^Suites: stable-security$/Suites: bookworm-security/'
     /etc/apt/sources.list.d/debian.sources
   - apt-get update
-  # libncurses-dev: `make menuconfig` (coreboot uses Kconfig too) needs it.
-  - apt-get install -y --no-install-recommends libncurses-dev python3-libfdt
+  - apt-get install -y --no-install-recommends libncurses-dev python3-libfdt python3-pefile
 env: {}
