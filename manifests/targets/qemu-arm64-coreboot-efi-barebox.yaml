@@ -1,11 +1,12 @@
-name: qemu-arm64-coreboot-barebox
+name: qemu-arm64-coreboot-efi-barebox
 description: >
-  Bundles barebox's own FIT output directly as coreboot's CBFS payload
-  (CONFIG_PAYLOAD_FIT), booting real coreboot -> barebox with no UEFI layer
-  in between. coreboot's MAINBOARD_VENDOR/MAINBOARD_PART_NUMBER are
-  overridden to "linux"/"dummy-virt" to match the compat string barebox's
-  bundled device tree advertises, so coreboot's FIT config-selection logic
-  picks the right one.
+  Chain-loads barebox via coreboot's own EDK2 Universal Payload
+  (CONFIG_PAYLOAD_EDK2 + CONFIG_EDK2_UNIVERSAL_PAYLOAD) instead of bundling
+  barebox's FIT output directly (see qemu-arm64-coreboot-barebox for that
+  path). coreboot's payloads/external/edk2/Makefile only ever builds the
+  Universal Payload for IA32 — see the coreboot component's stack-entry
+  patch, which parameterizes that on CONFIG_ARCH_ARM64 (EDK2's own
+  UefiPayloadPkg.dsc already supports AARCH64 as a first-class arch).
 arch: arm64
 stack:
   - component: barebox
@@ -35,7 +36,6 @@ stack:
         # CONFIG_PAYLOAD_NONE is not set
         CONFIG_PAYLOAD_EDK2=y
         CONFIG_EDK2_UNIVERSAL_PAYLOAD=y
-        CONFIG_EDK2_CUSTOM_BUILD_PARAMS="--pcd gUefiPayloadPkgTokenSpaceGuid.PcdHandOffFdtEnable=FALSE"
 
 qemu:
   binary: qemu-system-aarch64
