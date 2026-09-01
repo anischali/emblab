@@ -12,7 +12,7 @@ description: >
   payload at build time (same idea as edk2's target-optional FvBootDxe
   bundling, ADR-010 — except here bundling is the only boot path, not an
   alternative to an already-working chain-loaded one, since coreboot has
-  no chain-loaded option to fall back to). vars.payload_conf (below) is
+  no chain-loaded option to fall back to). vars.extra_conf (below) is
   how a target supplies that payload.
 
   Toolchain: uses coreboot's own official prebuilt cross-toolchain image
@@ -55,7 +55,7 @@ description: >
   for our purposes (zstd adds unwanted ramstage compression;
   fit_support_timestamps pulls in CONFIG_PAYLOAD_FIT_SUPPORT, which
   conflicts with the plain CONFIG_PAYLOAD_ELF this component's
-  payload_conf uses) — both are confirmed (by reading them) to reduce to
+  extra_conf uses) — both are confirmed (by reading them) to reduce to
   just CONFIG_VENDOR_EMULATION=y + CONFIG_BOARD_EMULATION_QEMU_AARCH64=y
   plus their own extras, so files/configs/config.emblab_qemu_aarch64 below
   supplies exactly that minimal pair ourselves, copied into the clone's
@@ -87,17 +87,24 @@ build:
     - configs/config.emblab_qemu_aarch64
   vars:
     defconfig: configs/config.emblab_qemu_aarch64
-    # Empty by default (plain coreboot build, no bundled payload). Same
-    # conditionally-populated-var trick as edk2.yaml's fv_boot_app_flag/
-    # tf-a.yaml's bl32_flags: a target that wants a payload embedded sets
-    # this to one or more real Kconfig lines (e.g. CONFIG_PAYLOAD_ELF=y
-    # and CONFIG_PAYLOAD_FILE="..."), appended onto .config — Kbuild's own
-    # oldconfig/olddefconfig machinery re-syncs everything else, same as
-    # barebox.yaml's extra_conf comment describes. Two real, confirmed
-    # shell-quoting bugs already hit here, both from a real value
-    # containing its own literal `"` (CONFIG_PAYLOAD_FILE="...",
-    # CONFIG_PAYLOAD_OPTIONS="..."): (1) `if [ -n "${vars.payload_conf}"
-    # ]` — the embedded `"` closed the test's own quotes early, and once a
+    # extra_conf: individual literal Kconfig lines (e.g. CONFIG_PAYLOAD_ELF=y
+    # and CONFIG_PAYLOAD_FILE="...") a target wants appended straight onto
+    # .config — a plain multi-line string (a YAML list of strings also
+    # works, same result: templating.resolve_value joins either shape with
+    # newlines before it reaches build.command). The block-scalar string
+    # is the more ergonomic of the two here: a Kconfig *choice* group (e.g.
+    # CONFIG_PAYLOAD_*) needs its OTHER members' disabling
+    # "# CONFIG_X is not set" lines spelled out explicitly too, and inside
+    # a `|` block that needs no quoting at all — a plain-scalar list item
+    # starting with `#` would need it, since YAML reads that as a comment
+    # there. Empty by default (plain coreboot build, no bundled payload) —
+    # same conditionally-populated-var trick as edk2.yaml's
+    # fv_boot_app_flag/tf-a.yaml's bl32_flags.
+    #
+    # Two real, confirmed shell-quoting bugs already hit here, both from a
+    # real value containing its own literal `"` (CONFIG_PAYLOAD_FILE="...",
+    # CONFIG_PAYLOAD_OPTIONS="..."): (1) `if [ -n "${vars.extra_conf}" ]`
+    # — the embedded `"` closed the test's own quotes early, and once a
     # value also had an unquoted space-separated token after that point
     # (CONFIG_PAYLOAD_OPTIONS's `-l ...` cbfstool flags), `[` read `-l` as
     # an operator and errored ("unexpected operator") — `set -e` does NOT
@@ -105,20 +112,26 @@ build:
     # never running the printf, producing a payload-less coreboot.rom with
     # no visible build error. (2) Removing the `if` guard and double-
     # quoting the printf argument instead (`printf '%s\n'
-    # "${vars.payload_conf}"`) hit the exact same embedded-`"` problem one
+    # "${vars.extra_conf}"`) hit the exact same embedded-`"` problem one
     # level down: the value split into multiple unquoted shell words, and
     # printf's format recycles across extra arguments — confirmed for
     # real, wrote each word onto its own line with quotes/spaces stripped,
     # corrupting `.config` badly enough Make itself errored ("missing
     # separator") parsing it. build.command now single-quotes the printf
-    # argument instead (`printf '%s\n' '${vars.payload_conf}'`) — safe
-    # specifically because no real payload_conf value ever contains a
+    # argument instead (`printf '%s\n' '${vars.extra_conf}'`) — safe
+    # specifically because no real extra_conf line ever contains a
     # literal `'`, only `"`; single quotes have no escape mechanism at all
     # in POSIX shell, so this only works because that stays true. The
     # printf always runs unconditionally even when this is "" — an empty
     # value just appends a blank line, which Kconfig ignores, so no `if`
     # guard is needed at all.
-    payload_conf: ""
+    extra_conf: ""
+    # extra_conf_file: one or more actual Kconfig fragment files, merged
+    # via coreboot's own scripts/kconfig/merge_config.sh -m (space-
+    # separated if more than one) — the right tool for a Kconfig *choice*
+    # group instead of hand-writing every other member's disabling line.
+    # Empty by default.
+    extra_conf_file: ""
   # XGCCPATH points make at coreboot-sdk's prebuilt toolchain instead of
   # coreboot's own util/crossgcc/xgcc (which nothing here ever populates
   # any more — no build.setup, no from-source crossgcc build). See the
@@ -165,7 +178,7 @@ build:
   #
   # `rm -rf build` — real, confirmed staleness bug: when a Kconfig symbol
   # flips from unset to y between one build attempt and the next against a
-  # not-yet-recloned source tree (e.g. payload_conf changing which
+  # not-yet-recloned source tree (e.g. extra_conf changing which
   # CONFIG_PAYLOAD_* choice member is selected), coreboot's build can leave
   # a previously-linked build/ramstage/.../ramstage.a on disk that Make
   # treats as already up to date, silently omitting object files that only
@@ -204,7 +217,8 @@ build:
     set -e;
     rm -rf build;
     make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ HOSTCC=/opt/xgcc/bin/clang HOSTCXX=/opt/xgcc/bin/clang++ KBUILD_DEFCONFIG=${vars.defconfig} defconfig;
-    printf '%s\n' '${vars.payload_conf}' >> .config;
+    if [ -n "${vars.extra_conf_file}" ]; then ./scripts/kconfig/merge_config.sh -m .config ${vars.extra_conf_file}; fi;
+    printf '%s\n' '${vars.extra_conf}' >> .config;
     make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ HOSTCC=/opt/xgcc/bin/clang HOSTCXX=/opt/xgcc/bin/clang++ olddefconfig;
     make UPDATED_SUBMODULES=1 XGCCPATH=/opt/xgcc/bin/ HOSTCC=/opt/xgcc/bin/clang HOSTCXX=/opt/xgcc/bin/clang++ -j${env.JOBS}
 artifacts:

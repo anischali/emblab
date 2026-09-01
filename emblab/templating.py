@@ -23,11 +23,17 @@ RESERVED_PREFIXES = ("vars", "env")
 
 def component_refs(value, known_components):
     """Return the set of component names referenced by bare
-    ``<component>.<key>`` tokens inside `value` (a string; non-strings yield
-    an empty set). `known_components` restricts matches to real names so an
-    unrelated dotted token isn't mistaken for a component reference.
+    ``<component>.<key>`` tokens inside `value` (a string, or a list of
+    strings — e.g. ``extra_conf``'s per-line list — unioning each item's
+    refs; anything else yields an empty set). `known_components` restricts
+    matches to real names so an unrelated dotted token isn't mistaken for a
+    component reference.
     """
     refs = set()
+    if isinstance(value, list):
+        for item in value:
+            refs |= component_refs(item, known_components)
+        return refs
     if not isinstance(value, str):
         return refs
     for token in TOKEN_RE.findall(value):
@@ -60,7 +66,19 @@ def default_env(workspace_dir, arch=""):
 
 
 def resolve_value(value, *, merged_vars, env, artifacts):
-    """Substitute every ``${...}`` token in a single string value."""
+    """Substitute every ``${...}`` token in a single string value.
+
+    A list value (e.g. ``extra_conf``'s individual Kconfig lines) resolves
+    each item the same way, then joins them with ``\\n`` — so a build.command
+    referencing ``${vars.extra_conf}`` sees one multi-line string, same shape
+    as a hand-written block-scalar var, whether the manifest wrote it as a
+    list or not.
+    """
+    if isinstance(value, list):
+        return "\n".join(
+            resolve_value(item, merged_vars=merged_vars, env=env, artifacts=artifacts)
+            for item in value
+        )
     if not isinstance(value, str):
         return value
 

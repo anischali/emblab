@@ -162,8 +162,9 @@ def test_build_plan_skips_unchanged_component_on_second_run(tmp_path, monkeypatc
 
 
 def test_barebox_extra_conf_defaults_to_noop_merge():
-    """No target sets vars.extra_conf -> the merge_config.sh step is a
-    literal shell no-op (empty -n check), never actually invoked."""
+    """No target sets vars.extra_conf_file, and vars.extra_conf is empty ->
+    the merge_config.sh step is a literal shell no-op (empty -n check),
+    never actually invoked, and the printf appends just a blank line."""
     component = manifests.load_component("barebox")
     merged_vars = {**component.build.vars, "arch": "arm64"}
     resolved_vars = templating.resolve_vars(merged_vars, env={}, artifacts={})
@@ -173,20 +174,21 @@ def test_barebox_extra_conf_defaults_to_noop_merge():
     expected = (
         "make ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE efi_v8_defconfig &&"
         " if [ -n \"\" ]; then ./scripts/kconfig/merge_config.sh -m .config ; fi &&"
+        " printf '%s\\n' '' >> .config &&"
         " make ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE -j4"
     )
     assert rendered == expected
 
 
-def test_barebox_extra_conf_set_by_target_merges_fragment():
-    """A target's stack entry can point vars.extra_conf at another
+def test_barebox_extra_conf_file_set_by_target_merges_fragment():
+    """A target's stack entry can point vars.extra_conf_file at another
     component's already-built artifact — e.g. a FIT image keystore
     fragment — and it lands inside the merge_config.sh invocation."""
     component = manifests.load_component("barebox")
     merged_vars = {
         **component.build.vars,
         "arch": "arm64",
-        "extra_conf": "${fit-image.files}/keystore.cfg",
+        "extra_conf_file": "${fit-image.files}/keystore.cfg",
     }
     resolved_vars = templating.resolve_vars(
         merged_vars, env={}, artifacts={"fit-image": {"files": "/work/artifacts/fit-image"}}
@@ -198,6 +200,23 @@ def test_barebox_extra_conf_set_by_target_merges_fragment():
         "./scripts/kconfig/merge_config.sh -m .config /work/artifacts/fit-image/keystore.cfg"
         in rendered
     )
+
+
+def test_barebox_extra_conf_list_appends_literal_lines():
+    """A target's stack entry can set vars.extra_conf to a list of literal
+    Kconfig lines, joined with newlines and appended directly onto
+    .config."""
+    component = manifests.load_component("barebox")
+    merged_vars = {
+        **component.build.vars,
+        "arch": "arm64",
+        "extra_conf": ["CONFIG_FOO=y", "CONFIG_BAR=n"],
+    }
+    resolved_vars = templating.resolve_vars(merged_vars, env={}, artifacts={})
+    rendered = templating.render_command(
+        component.build.command, resolved_vars=resolved_vars, env={"JOBS": "4"}
+    )
+    assert "printf '%s\\n' 'CONFIG_FOO=y\nCONFIG_BAR=n' >> .config" in rendered
 
 
 def test_build_plan_fit_target_resolves_kernel_and_ramdisk_and_copies_its(tmp_path, monkeypatch):

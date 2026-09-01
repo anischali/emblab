@@ -22,8 +22,22 @@ build:
   # for this QEMU aarch64 target, the value a target must supply is "arm".
   vars:
     defconfig: qemu_arm64_defconfig
+    # extra_conf/extra_conf_file: same mechanism as barebox.yaml/
+    # coreboot.yaml/linux-kernel.yaml — extra_conf is individual literal
+    # Kconfig lines appended straight onto .config (a plain multi-line
+    # string; no apostrophes in any line, single-quoted printf below);
+    # extra_conf_file is one or more actual Kconfig fragment files, merged
+    # via u-boot's own scripts/kconfig/merge_config.sh -m (space-separated
+    # if more than one) — the right tool for a Kconfig *choice* group,
+    # where extra_conf's line would also need the group's other members'
+    # disabling "# CONFIG_X is not set" lines spelled out. Both empty by
+    # default.
+    extra_conf: ""
+    extra_conf_file: ""
   command: >-
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig} &&
+    if [ -n "${vars.extra_conf_file}" ]; then ./scripts/kconfig/merge_config.sh -m .config ${vars.extra_conf_file}; fi &&
+    printf '%s\n' '${vars.extra_conf}' >> .config &&
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS}
 artifacts:
   bin: u-boot.bin

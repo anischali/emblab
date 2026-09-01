@@ -18,13 +18,24 @@ build:
   # linux-kernel must set it.
   vars:
     defconfig: defconfig
-    # Space-separated build.files entries to actually merge in — a target
-    # can override this to select a different fragment subset.
-    fragments: tiny.cfg
+    # Space-separated build.files entries to merge via merge_config.sh — a
+    # target can override this to select a different fragment subset.
+    extra_conf_file: tiny.cfg
+    # Individual literal Kconfig lines a target wants appended straight
+    # onto .config, in addition to (or instead of) extra_conf_file — a
+    # plain multi-line string (a YAML list of strings also works, same
+    # result: templating.resolve_value joins either shape with newlines).
+    # The block-scalar string avoids having to quote a "# CONFIG_X is not
+    # set" line, which a plain-scalar list item would need (YAML reads a
+    # leading `#` as a comment there, not inside a `|` block). No
+    # apostrophes in any line (single-quoted printf below). Empty by
+    # default.
+    extra_conf: ""
   command: >-
     set -e;
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE ${vars.defconfig};
-    ./scripts/kconfig/merge_config.sh -m .config ${vars.fragments};
+    ./scripts/kconfig/merge_config.sh -m .config ${vars.extra_conf_file};
+    printf '%s\n' '${vars.extra_conf}' >> .config;
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE olddefconfig;
     make ARCH=${vars.arch} CROSS_COMPILE=$CROSS_COMPILE -j${env.JOBS} Image
 artifacts:

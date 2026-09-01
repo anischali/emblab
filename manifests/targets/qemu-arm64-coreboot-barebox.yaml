@@ -78,45 +78,11 @@ stack:
       - mtools
       - fdisk
     vars:
-      defconfig: efi_v8_defconfig
+      defconfig: multi_v8_defconfig
       arch: arm64
-      # Merges in esp.cfg (see barebox.yaml's build.files) to turn on
-      # CONFIG_EFI_PAYLOAD_ESP_IMAGE, which is off by default — a plain
-      # bool, not part of a choice group, so a direct merge_config.sh
-      # merge (what extra_conf triggers) resolves it correctly with no
-      # visibility pitfall like coreboot's payload choice below.
-      extra_conf: esp.cfg
-  - component: edk2
-    image: gnu-aarch64
-    vars:
-      platform: UefiPayloadPkg
-      platform_path: UefiPayloadPkg
-      edk2_arch: AARCH64
-      # UefiPayloadPkg.dsc's OUTPUT_DIRECTORY = Build/UefiPayloadPkg$(BUILD_ARCH)
-      # uses BUILD_ARCH verbatim (confirmed by reading the dsc) — unlike
-      # ArmVirtQemu's differently-cased "AArch64" friendly name, this is
-      # the same string as -a/edk2_arch above.
-      edk2_build_arch: AARCH64
-      # FD_BASE overrides UefiPayloadPkg.fdf's own DEFINE FD_BASE = 0x00800000
-      # default (also feeds gUefiPayloadPkgTokenSpaceGuid.PcdPayloadFdMemBase
-      # via the fdf FD.UefiPayload section BaseAddress = $(FD_BASE) | Pcd...
-      # syntax) -- 0x00800000 is an x86 assumption (low physical RAM is
-      # usable there on x86), confirmed for real to fail on this board:
-      # coreboot own boot log showed real RAM only from 0x40000000, and
-      # cbfstool own SELF loader refused the payload with SELF segment
-      # does not target RAM: 0x00800000. 0x48000000 sits well inside the
-      # free 0x40000000-0x6001ffff RAM range coreboot own table dumped in
-      # that same boot log, comfortably clear of ramstage own memory use
-      # above it.
-      build_macros: "-D BUILD_ARCH=AARCH64 -D BOOTLOADER=COREBOOT -D FD_BASE=0x48000000"
-      # UefiPayloadPkg.fdf's [FD.UefiPayload] section — EDK2's build tool
-      # uppercases the section name for the real output filename
-      # (confirmed against a real build: Build/UefiPayloadPkgAARCH64/
-      # DEBUG_GCC/FV/UEFIPAYLOAD.fd), matching coreboot's own
-      # payloads/external/edk2/Makefile naming convention even though that
-      # Makefile itself is NOT used here (it's hardcoded x86-only, see
-      # this target's description).
-      fd_name: UEFIPAYLOAD.fd
+      extra_conf: |
+        CONFIG_GENERIC_DT_F=y
+
   - component: coreboot
     # coreboot-sdk ships a prebuilt cross-toolchain (GCC 14.2.0, confirmed
     # real — see coreboot.yaml's Toolchain paragraph) instead of gnu-aarch64's
@@ -126,46 +92,19 @@ stack:
     # complete build with none declared.
     image: coreboot-sdk
     vars:
-      payload_conf: |
-        # No apostrophes/backticks in this comment on purpose: it lands
-        # inside build.command printf %s single quotes, see coreboot.yaml.
-        # NOT using CONFIG_PAYLOAD_EDK2/CONFIG_EDK2_UEFIPAYLOAD: confirmed
-        # for real that coreboot own payloads/external/edk2/Makefile
-        # hardcodes -a IA32 -a X64 / -D BUILD_ARCH=X64 (and -a IA32 for
-        # UniversalPayload) with no AARCH64 codepath at all, despite
-        # Kconfig.name depends on ARCH_X86 or ARCH_ARM64 nominally allowing
-        # selection here -- that Makefile would build an x86 image
-        # regardless of this being an arm64 board. Building UefiPayloadPkg
-        # for AARCH64 ourselves instead, via this project own edk2
-        # component (see this target edk2 stack entry above), feeding the
-        # result in as CONFIG_PAYLOAD_ELF -- confirmed for real by reading
-        # util/cbfstool/cbfstool.c that add-payload (payload type in
-        # Makefile.mk) tries ELF, then FIT, then a raw UEFI firmware
-        # volume (parse_fv_to_payload) before giving up, and our own
-        # UEFIPAYLOAD.fd is a raw FV (confirmed via od: FVH signature at
-        # offset 0x28, no ELF magic) -- so CONFIG_PAYLOAD_ELF works here
-        # despite the misleading Kconfig name, same generic payload cbfs
-        # type barebox own CONFIG_PAYLOAD_FIT above already uses.
+      extra_conf: |
         CONFIG_VENDOR_EMULATION=y
         CONFIG_BOARD_EMULATION_QEMU_AARCH64=y
-        # CONFIG_PAYLOAD_NONE is not set
-        CONFIG_PAYLOAD_ELF=y
-        CONFIG_PAYLOAD_FILE="${edk2.fd}"
-        # payloads/Kconfig own compression choice defaults to
-        # COMPRESSED_PAYLOAD_NONE only if PAYLOAD_FIT_SUPPORT is selected
-        # (which barebox own CONFIG_PAYLOAD_FIT=y above gets via its own
-        # select) -- CONFIG_PAYLOAD_ELF=y does not select that, so it falls
-        # through to the unconditional default COMPRESSED_PAYLOAD_LZMA,
-        # confirmed by reading payloads/Kconfig directly. Real symptom this
-        # produced: the 7 MiB raw firmware volume segment loaded and jumped
-        # to its entry point with zero further output at all -- consistent
-        # with a corrupted LZMA round-trip on a large binary blob, not a
-        # load-address or entry-convention problem (both already confirmed
-        # correct: dstaddr matches FD_BASE, coreboot own bl31.c hands off
-        # to EL2 unconditionally for every payload type, same path already
-        # proven working for bareboxs own FIT payload above). Disabling
-        # compression for this payload specifically.
+        ## CONFIG_PAYLOAD_NONE is not set
+        ## CONFIG_PAYLOAD_EDK2=y
+        ## CONFIG_EDK2_UEFIPAYLOAD=y
+        ## CONFIG_COMPRESSED_PAYLOAD_LZMA=y
+        ## CONFIG_EDK2_CUSTOM_BUILD_PARAMS="-D FD_BASE=0x48000000"
+        CONFIG_PAYLOAD_FIT=y
         CONFIG_COMPRESSED_PAYLOAD_NONE=y
+        CONFIG_PAYLOAD_FILE="${barebox.images}/barebox-dt-2nd.img"
+        CONFIG_MAINBOARD_VENDOR="linux"
+        CONFIG_MAINBOARD_PART_NUMBER="dummy-virt"
 
 qemu:
   binary: qemu-system-aarch64
@@ -180,9 +119,5 @@ qemu:
     - "-nographic"
     - "-device"
     - "virtio-rng-pci"
-    - "-drive"
-    - "if=none,format=raw,id=esp,file=${barebox.images}/barebox.esp"
-    - "-device"
-    - "virtio-blk-pci,drive=esp"
     - "-bios"
     - "${coreboot.rom}"

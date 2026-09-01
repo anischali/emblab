@@ -125,12 +125,32 @@ def _parse_submodules(value, path):
     )
 
 
+def _check_var_type(value, *, where):
+    """A var's value must be a plain string, or a list of plain strings
+    (e.g. `extra_conf`'s individual Kconfig lines, joined with newlines at
+    resolve time — see templating.resolve_value) — anything else can't be
+    rendered into a build.command."""
+    if isinstance(value, str):
+        return
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return
+    raise ManifestError(
+        f"{where}: var value must be a string or a list of strings, "
+        f"got {type(value).__name__}"
+    )
+
+
 def _check_no_bare_component_tokens(value, *, where):
     """Raise if `value` contains a ${X.Y} token whose X isn't 'vars' or 'env'
     — i.e. a bare component-artifact reference, which is only legal inside a
     *target's* stack vars, never inside a component's own build.vars
-    defaults (components must stay reusable/self-contained).
+    defaults (components must stay reusable/self-contained). A list value
+    (e.g. a default `extra_conf: []`) is checked item by item.
     """
+    if isinstance(value, list):
+        for item in value:
+            _check_no_bare_component_tokens(item, where=where)
+        return
     if not isinstance(value, str):
         return
     for token in TOKEN_RE.findall(value):
@@ -213,6 +233,7 @@ def load_component(name):
     build_data = _require(data, "build", path)
     build_vars = dict(build_data.get("vars", {}))
     for var_name, var_value in build_vars.items():
+        _check_var_type(var_value, where=f"{_display(path)}: build.vars.{var_name}")
         _check_no_bare_component_tokens(
             var_value, where=f"{_display(path)}: build.vars.{var_name}"
         )
@@ -316,10 +337,17 @@ def load_target(name):
                     f"manifests/components/{component_name}/files/{filename}"
                 )
 
+        stack_vars = dict(raw_entry.get("vars") or {})
+        for var_name, var_value in stack_vars.items():
+            _check_var_type(
+                var_value,
+                where=f"{_display(path)}: stack[{i}] ('{component_name}') vars.{var_name}",
+            )
+
         stack.append(
             StackEntry(
                 component=component_name,
-                vars=dict(raw_entry.get("vars") or {}),
+                vars=stack_vars,
                 image=image_name,
                 builddeps=list(raw_entry.get("builddeps", [])),
                 patches=entry_patches,
@@ -338,15 +366,17 @@ def load_target(name):
                     f"vars.{var_name} references its own component — "
                     "a component cannot depend on itself"
                 )
-            for token in TOKEN_RE.findall(var_value if isinstance(var_value, str) else ""):
-                head = token.split(".", 1)[0]
-                if head in RESERVED_PREFIXES or head in refs:
-                    continue
-                raise ManifestError(
-                    f"{_display(path)}: stack entry '{entry.component}' "
-                    f"vars.{var_name} references '{head}', which is not a "
-                    "component in this target's stack"
-                )
+            items = var_value if isinstance(var_value, list) else [var_value]
+            for item in items:
+                for token in TOKEN_RE.findall(item if isinstance(item, str) else ""):
+                    head = token.split(".", 1)[0]
+                    if head in RESERVED_PREFIXES or head in refs:
+                        continue
+                    raise ManifestError(
+                        f"{_display(path)}: stack entry '{entry.component}' "
+                        f"vars.{var_name} references '{head}', which is not a "
+                        "component in this target's stack"
+                    )
 
     qemu_data = _require(data, "qemu", path)
     qemu_image_name = _require(qemu_data, "image", path)
