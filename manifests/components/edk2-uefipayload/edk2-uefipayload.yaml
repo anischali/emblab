@@ -1,0 +1,81 @@
+name: edk2-uefipayload
+description: >
+  Builds edk2's UefiPayloadPkg for use as an externally-built coreboot
+  payload (CONFIG_PAYLOAD_FIT/CONFIG_PAYLOAD_ELF + CONFIG_PAYLOAD_FILE on the
+  target's coreboot stack entry) — coreboot's own
+  CONFIG_PAYLOAD_EDK2/CONFIG_EDK2_UNIVERSAL_PAYLOAD path
+  (payloads/external/edk2/Makefile) hardcodes `-a IA32 -a X64` with no
+  AARCH64 codepath at all: confirmed both by reading the Makefile directly
+  and by a real failed build attempt through it (BUILD_ARCH=IA32,
+  `BlParseLib` unresolved for several IA32/X64-only modules — UefiPayloadPkg
+  .dsc's BOOTLOADER=COREBOOT -> CbParseLib wiring isn't set up for those
+  arches in this fork). This component builds the same UefiPayloadPkg.dsc
+  target through this project's own edk2 clone and toolchain instead, with
+  the real ${vars.edk2_arch} the target actually wants.
+
+  vars.upl_fit (below) picks which of two build modes: empty/false
+  (default) builds plain UefiPayloadPkg via edk2's own `build` tool (a raw
+  firmware volume, UEFIPAYLOAD.fd); true (or any non-empty string) builds
+  edk2's Universal Payload instead, via
+  UefiPayloadPkg/UniversalPayloadBuild.py --Fit (a UPL-spec FIT,
+  UniversalPayload.fit). Both modes always copy their real
+  output to a single fixed-name artifact (Build/emblab-payload.bin) so
+  `artifacts:` below needs only one always-present key regardless of mode —
+  every artifact a component declares must exist after every build of that
+  component, and the two modes' real output filenames/paths differ.
+
+  A separate component from `edk2` (which builds ArmVirtQemu), not a third
+  mode on it: same reasoning, kept simple by never mixing an ArmVirtQemu
+  build into this component's single fixed-artifact convention.
+
+  Uses MrChromebox's edk2 fork, not upstream tianocore/edk2 — coreboot's
+  own payloads/external/edk2/Kconfig defaults CONFIG_EDK2_REPOSITORY /
+  CONFIG_EDK2_TAG_OR_REV to this exact fork for UefiPayload builds (default
+  EDK2_REPO_MRCHROMEBOX), on the theory that its AArch64 Universal Payload
+  support is more complete/tested than upstream's.
+source:
+  git: https://github.com/mrchromebox/edk2.git
+  ref: uefipayload_2511
+  path: edk2-uefipayload
+  # CryptoPkg vendors OpenSSL/mbedTLS as submodules; UefiPayloadPkg.dsc
+  # pulls in CryptoPkg, so a build without these fails (same as edk2.yaml's
+  # own ArmVirtQemu build).
+  submodules: true
+build:
+  # vars.edk2_arch has no default — every target's stack entry must set it
+  # (components stay arch-agnostic, see ADR-009). BaseTools' -a flag /
+  # GCC_<ARCH>_PREFIX spelling (e.g. "AARCH64").
+  vars:
+    # Empty by default (plain UefiPayloadPkg build); a target sets this to
+    # build the Universal Payload FIT instead (see description above).
+    upl_fit: ""
+    # UefiPayloadPkg.dsc's BlParseLib selector — "COREBOOT" resolves it to
+    # UefiPayloadPkg/Library/CbParseLib (see CONTEXT.md); default is what
+    # every real user of this component wants, but a target can override it
+    # for a different bootloader integration.
+    bootloader: COREBOOT
+    # UniversalPayloadBuild.py's own -l/--LoadAddress: its script default
+    # (0x800000) is an x86 assumption. Only consulted when upl_fit is set —
+    # the plain build's own load address (if it needs overriding for a
+    # given board) goes through build_macros' -D FD_BASE=... instead, same
+    # as edk2.yaml's own UEFIPAYLOAD.fd target.
+    load_address: ""
+    # Extra -D macros, empty by default, same conditionally-populated-var
+    # trick as edk2.yaml's build_macros.
+    build_macros: ""
+  command: >-
+    set -e;
+    export PACKAGES_PATH=$PWD;
+    export GCC_${vars.edk2_arch}_PREFIX=$CROSS_COMPILE;
+    pip3 install --break-system-packages -r pip-requirements.txt;
+    . ./edksetup.sh;
+    make -C BaseTools;
+    if [ -n "${vars.upl_fit}" ]; then
+      python3 UefiPayloadPkg/UniversalPayloadBuild.py -a ${vars.edk2_arch} -b DEBUG -t GCC --Fit -l ${vars.load_address} -D BOOTLOADER=${vars.bootloader} -D BUILD_ARCH=${vars.edk2_arch} -D UNIVERSAL_PAYLOAD_FORMAT=FIT --pcd gUefiPayloadPkgTokenSpaceGuid.PcdHandOffFdtEnable=TRUE ${vars.build_macros};
+      cp Build/UefiPayloadPkg${vars.edk2_arch}/UniversalPayload.fit Build/emblab-payload.bin;
+    else
+      build -a ${vars.edk2_arch} -t GCC -b DEBUG -p UefiPayloadPkg/UefiPayloadPkg.dsc -D BOOTLOADER=${vars.bootloader} -D BUILD_ARCH=${vars.edk2_arch} ${vars.build_macros};
+      cp Build/UefiPayloadPkg${vars.edk2_arch}/DEBUG_GCC/FV/UEFIPAYLOAD.fd Build/emblab-payload.bin;
+    fi
+artifacts:
+  payload: Build/emblab-payload.bin

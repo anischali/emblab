@@ -1,12 +1,25 @@
 name: qemu-arm64-coreboot-efi-barebox
 description: >
-  Chain-loads barebox via coreboot's own EDK2 Universal Payload
-  (CONFIG_PAYLOAD_EDK2 + CONFIG_EDK2_UNIVERSAL_PAYLOAD) instead of bundling
-  barebox's FIT output directly (see qemu-arm64-coreboot-barebox for that
-  path). coreboot's payloads/external/edk2/Makefile only ever builds the
-  Universal Payload for IA32 — see the coreboot component's stack-entry
-  patch, which parameterizes that on CONFIG_ARCH_ARM64 (EDK2's own
-  UefiPayloadPkg.dsc already supports AARCH64 as a first-class arch).
+  Chain-loads barebox via a real edk2 UefiPayloadPkg Universal Payload
+  (UniversalPayload.fit), built externally through the new edk2-uefipayload
+  component (upl_fit: true — UefiPayloadPkg/UniversalPayloadBuild.py -a
+  AARCH64 -D BOOTLOADER=COREBOOT -D BUILD_ARCH=AARCH64 --Fit) rather than
+  coreboot's own CONFIG_PAYLOAD_EDK2/CONFIG_EDK2_UNIVERSAL_PAYLOAD:
+  coreboot's own payloads/external/edk2/Makefile hardcodes `-a IA32` for
+  that target (read directly — no AARCH64 codepath at all), despite
+  Kconfig.name nominally allowing selection on this board. The built file is
+  fed to coreboot via the same generic external-payload mechanism
+  qemu-arm64-coreboot-barebox uses for barebox's own FIT (CONFIG_PAYLOAD_FIT
+  + CONFIG_PAYLOAD_FILE="${edk2-uefipayload.payload}"), not
+  CONFIG_PAYLOAD_EDK2. barebox itself boots as a UEFI OS off a
+  virtio-blk-attached ESP disk image, same as qemu-arm64-edk2-barebox.
+  UNVERIFIED against a real build — see edk2-uefipayload.yaml's description
+  for the one real risk identified by reading coreboot's src/lib/fit.c: its
+  FIT config-node parser only recognizes kernel/fdt/ramdisk/compatible
+  properties, and edk2's own Tools/MkFitImage.py writes a UPL-spec conf node
+  (require-fit/firmware=tianocore) with none of those — whether coreboot's
+  generic FIT loader can actually boot a Universal Payload FIT at all is
+  something only a real build+boot attempt can answer.
 arch: arm64
 stack:
   - component: barebox
@@ -25,6 +38,25 @@ stack:
         CONFIG_CONSOLE_ACTIVATE_ALL=y
         CONFIG_EFI_PAYLOAD_ESP_IMAGE=y
 
+  - component: edk2-uefipayload
+    image: gnu-aarch64
+    builddeps:
+      - iasl
+      - uuid-dev
+      - cmake
+    vars:
+      edk2_arch: AARCH64
+      # Build the Universal Payload FIT, not plain UefiPayloadPkg (see
+      # edk2-uefipayload.yaml's description for the mode this flag picks).
+      upl_fit: true
+      # UniversalPayloadBuild.py's own -l/--LoadAddress default (0x800000)
+      # is an x86 assumption; this board's real RAM starts at 0x40000000
+      # (same FD_BASE fix the earlier UEFIPAYLOAD.fd attempt needed, see
+      # CONTEXT.md) — reusing that already-confirmed-free address.
+      load_address: "0x48000000"
+
+      bootloader: COREBOOT
+
   - component: coreboot
     # coreboot-sdk ships a prebuilt cross-toolchain (see coreboot.yaml) —
     # no builddeps needed here, no from-source crossgcc build.
@@ -36,7 +68,7 @@ stack:
         # CONFIG_PAYLOAD_NONE is not set
         CONFIG_PAYLOAD_EDK2=y
         CONFIG_EDK2_UNIVERSAL_PAYLOAD=y
-
+        CONFIG_PAYLOAD_FILE="${edk2-uefipayload.payload}"
 qemu:
   binary: qemu-system-aarch64
   image: qemu-runner
