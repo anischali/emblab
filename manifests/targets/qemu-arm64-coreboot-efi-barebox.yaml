@@ -55,6 +55,7 @@ stack:
     # no builddeps needed here, no from-source crossgcc build.
     image: coreboot-sdk
     vars:
+      ## CONFIG_PAYLOAD_FILE="${edk2-uefipayload.payload}"
       extra_conf: |
         CONFIG_VENDOR_EMULATION=y
         CONFIG_BOARD_EMULATION_QEMU_AARCH64=y
@@ -62,7 +63,6 @@ stack:
         CONFIG_PAYLOAD_EDK2=y
         CONFIG_EDK2_UNIVERSAL_PAYLOAD=y
         CONFIG_EDK2_SERIAL_SUPPORT=y
-        ## CONFIG_PAYLOAD_FILE="${edk2-uefipayload.payload}"
 qemu:
   binary: qemu-system-aarch64
   image: qemu-runner
