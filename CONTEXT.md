@@ -867,7 +867,10 @@ hand-editing it under `workspace/src/<path>`.
      before whatever is silencing it — see Next.
   83/83 offline tests pass unchanged.
 ## In progress
-Nothing in flight.
+- `qemu-arm64-coreboot-efi-barebox` experimenting with coreboot's native
+  `CONFIG_PAYLOAD_EDK2`/`CONFIG_EDK2_UNIVERSAL_PAYLOAD` fetch instead of the
+  external `edk2-uefipayload` emblab component (see commit `2cb6489`,
+  2026-09-02) — see Next item 17, real and currently blocking.
 
 ## Next
 1. `emblab run qemu-arm64-uefi-barebox` — confirm the real
@@ -979,6 +982,39 @@ Nothing in flight.
     compression) and the two concrete next diagnostic steps (QEMU
     gdbstub session, or an early raw UART poke patched into
     `UefiPayloadEntry.c`).
+
+17. **`qemu-arm64-coreboot-efi-barebox`'s native `CONFIG_PAYLOAD_EDK2`/
+    `CONFIG_EDK2_UNIVERSAL_PAYLOAD` path hangs on an interactive git
+    credential prompt, real and unresolved.** With the external
+    `edk2-uefipayload` stack entry commented out and coreboot's `extra_conf`
+    switched to the native fetch (commit `2cb6489`, 2026-09-02), `make`
+    reaches coreboot's own `payloads/external/edk2/Makefile` — a codepath
+    entirely outside emblab's own `sources.py`/`ensure_source`, so none of
+    that module's fetch/credential handling applies. Observed for real:
+    `Refresh index: 100% (10186/10186), done.` then `Working directory not
+    clean; will not overwrite` against a stale checkout already present
+    under `workspace/src/coreboot/payloads/external/edk2` (left over from an
+    earlier attempt) — but rather than aborting there, the Makefile went on
+    to attempt a fresh `git clone` anyway, which then blocked on `Password
+    for 'https://  @github.com':` (empty username — no credential helper
+    configured for that shell, and this is plain `https://github.com/...`,
+    not a URL that should need auth at all). This compounds the
+    already-documented gap in this same file's own header comment: coreboot's
+    `payloads/external/edk2/Makefile` hardcodes `-a IA32`/`-D BUILD_ARCH=X64`
+    with no AArch64 codepath, so even if the clone/credential issue is
+    worked around, this native path is not expected to produce a working
+    AArch64 build at all. The known-working route is what commit `2cb6489`
+    disabled: the external `edk2-uefipayload` component + coreboot's
+    `CONFIG_PAYLOAD_FILE="${edk2-uefipayload.payload}"` (proven pattern, same
+    shape as `qemu-arm64-coreboot-barebox`'s UefiPayloadPkg-as-payload entry
+    under Proven). Real next steps if the native path is still wanted:
+    reproduce outside udocker to see whether the stale-tree refusal is
+    udocker-specific (same shape as the 2026-08-31 coreboot submodule-wipe
+    investigation), and pre-clean
+    `workspace/src/coreboot/payloads/external/edk2` before any retry;
+    otherwise, revert to the external-component approach (uncomment the
+    `edk2-uefipayload` stack entry, restore `CONFIG_PAYLOAD_FILE`, drop
+    `CONFIG_PAYLOAD_EDK2`/`CONFIG_EDK2_UNIVERSAL_PAYLOAD`).
 
 ## Open questions
 - Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox`,
