@@ -28,14 +28,19 @@ description: >
   mode on it: same reasoning, kept simple by never mixing an ArmVirtQemu
   build into this component's single fixed-artifact convention.
 
-  Uses MrChromebox's edk2 fork, not upstream tianocore/edk2 — coreboot's
-  own payloads/external/edk2/Kconfig defaults CONFIG_EDK2_REPOSITORY /
-  CONFIG_EDK2_TAG_OR_REV to this exact fork for UefiPayload builds (default
-  EDK2_REPO_MRCHROMEBOX), on the theory that its AArch64 Universal Payload
-  support is more complete/tested than upstream's.
+  Upstream tianocore/edk2, not MrChromebox's fork — reverted back after the
+  fork hit a real UefiPayloadPkg.dsc gap building the Universal Payload
+  (--Fit): BlParseLib is only resolved when UNIVERSAL_PAYLOAD == FALSE, but
+  UniversalPayloadBuild.py always builds with UNIVERSAL_PAYLOAD=TRUE, and
+  PlatformBootManagerLib/the TCG2 physical-presence libs still hard-depend
+  on it regardless — a real build failure, reproduced identically under
+  both -a IA32/-t GCC and -a AARCH64/-t GCC5. Whether upstream's own DSC
+  has the same gap for the --Fit path is UNVERIFIED — only the plain
+  UefiPayloadPkg build (upl_fit unset) has been proven for real against
+  AARCH64 so far (see CONTEXT.md).
 source:
-  git: https://github.com/mrchromebox/edk2.git
-  ref: uefipayload_2511
+  git: https://github.com/tianocore/edk2.git
+  ref: master
   path: edk2-uefipayload
   # CryptoPkg vendors OpenSSL/mbedTLS as submodules; UefiPayloadPkg.dsc
   # pulls in CryptoPkg, so a build without these fails (same as edk2.yaml's

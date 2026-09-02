@@ -46,16 +46,8 @@ stack:
       - cmake
     vars:
       edk2_arch: AARCH64
-      # Build the Universal Payload FIT, not plain UefiPayloadPkg (see
-      # edk2-uefipayload.yaml's description for the mode this flag picks).
       upl_fit: true
-      # UniversalPayloadBuild.py's own -l/--LoadAddress default (0x800000)
-      # is an x86 assumption; this board's real RAM starts at 0x40000000
-      # (same FD_BASE fix the earlier UEFIPAYLOAD.fd attempt needed, see
-      # CONTEXT.md) — reusing that already-confirmed-free address.
       load_address: "0x48000000"
-
-      bootloader: COREBOOT
 
   - component: coreboot
     # coreboot-sdk ships a prebuilt cross-toolchain (see coreboot.yaml) —
