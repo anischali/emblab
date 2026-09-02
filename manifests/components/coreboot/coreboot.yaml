@@ -31,6 +31,11 @@ source:
     - 3rdparty/arm-trusted-firmware
     - 3rdparty/vboot
 build:
+  patches:
+    # payloads/external/edk2/Makefile (CONFIG_PAYLOAD_EDK2 path): re-clones
+    # if a prior interrupted clone left an empty repo, and stops swallowing
+    # fetch errors that showed up as a misleading "not a valid git reference".
+    - 0001-edk2-payload-self-heal-clone-and-fetch-tags.patch
   files:
     - configs/config.emblab_qemu_aarch64
   vars:

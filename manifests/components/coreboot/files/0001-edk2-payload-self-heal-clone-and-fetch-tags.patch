@@ -1,0 +1,22 @@
+--- a/payloads/external/edk2/Makefile
++++ b/payloads/external/edk2/Makefile
+@@ -296,13 +296,16 @@
+ 		git submodule update --init --checkout
+ 
+ $(EDK2_PATH): $(WORKSPACE)
+-	if [ ! -d "$(EDK2_PATH)" ]; then \
+-		git clone --recurse-submodules $(CONFIG_EDK2_REPOSITORY) $(EDK2_PATH) -j5; \
++	if [ ! -d "$(EDK2_PATH)/.git" ] || ! git -C $(EDK2_PATH) rev-parse --verify -q HEAD >/dev/null 2>&1; then \
++		rm -rf $(EDK2_PATH); \
++		git clone --recurse-submodules $(CONFIG_EDK2_REPOSITORY) $(EDK2_PATH) -j5 || \
++			{ echo "    ERROR: git clone of $(CONFIG_EDK2_REPOSITORY) failed"; exit 1; }; \
+ 	fi
+ 	cd $(EDK2_PATH); \
+ 		git checkout MdeModulePkg/Logo/Logo.bmp > /dev/null 2>&1 || true; \
+ 		echo "    Fetching new commits from $(CONFIG_EDK2_REPOSITORY)"; \
+-		git fetch origin 2>/dev/null; \
++		git fetch --tags origin +refs/heads/*:refs/remotes/origin/* || \
++			{ echo "    ERROR: git fetch from $(CONFIG_EDK2_REPOSITORY) failed"; exit 1; }; \
+ 		if ! git rev-parse --verify -q $(CONFIG_EDK2_TAG_OR_REV)^{object} >/dev/null; then \
+ 			echo "    $(CONFIG_EDK2_TAG_OR_REV) is not a valid git reference"; \
+ 			exit 1; \

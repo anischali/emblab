@@ -20,4 +20,9 @@ provision:
     /etc/apt/sources.list.d/debian.sources
   - apt-get update
   - apt-get install -y --no-install-recommends libncurses-dev python3-libfdt python3-pefile
-env: {}
+  # HTTP/2 git POSTs (upload-pack) get corrupted under proot, GitHub then
+  # 401s them as if unauthenticated; forcing HTTP/1.1 fixed it (confirmed).
+  - git config --system http.version HTTP/1.1
+env:
+  # applies to emblab shell too, not just build.command.
+  GIT_TERMINAL_PROMPT: "0"

@@ -983,38 +983,49 @@ hand-editing it under `workspace/src/<path>`.
     gdbstub session, or an early raw UART poke patched into
     `UefiPayloadEntry.c`).
 
-17. **`qemu-arm64-coreboot-efi-barebox`'s native `CONFIG_PAYLOAD_EDK2`/
-    `CONFIG_EDK2_UNIVERSAL_PAYLOAD` path hangs on an interactive git
-    credential prompt, real and unresolved.** With the external
-    `edk2-uefipayload` stack entry commented out and coreboot's `extra_conf`
-    switched to the native fetch (commit `2cb6489`, 2026-09-02), `make`
-    reaches coreboot's own `payloads/external/edk2/Makefile` — a codepath
-    entirely outside emblab's own `sources.py`/`ensure_source`, so none of
-    that module's fetch/credential handling applies. Observed for real:
-    `Refresh index: 100% (10186/10186), done.` then `Working directory not
-    clean; will not overwrite` against a stale checkout already present
-    under `workspace/src/coreboot/payloads/external/edk2` (left over from an
-    earlier attempt) — but rather than aborting there, the Makefile went on
-    to attempt a fresh `git clone` anyway, which then blocked on `Password
-    for 'https://  @github.com':` (empty username — no credential helper
-    configured for that shell, and this is plain `https://github.com/...`,
-    not a URL that should need auth at all). This compounds the
-    already-documented gap in this same file's own header comment: coreboot's
-    `payloads/external/edk2/Makefile` hardcodes `-a IA32`/`-D BUILD_ARCH=X64`
-    with no AArch64 codepath, so even if the clone/credential issue is
-    worked around, this native path is not expected to produce a working
-    AArch64 build at all. The known-working route is what commit `2cb6489`
-    disabled: the external `edk2-uefipayload` component + coreboot's
-    `CONFIG_PAYLOAD_FILE="${edk2-uefipayload.payload}"` (proven pattern, same
-    shape as `qemu-arm64-coreboot-barebox`'s UefiPayloadPkg-as-payload entry
-    under Proven). Real next steps if the native path is still wanted:
-    reproduce outside udocker to see whether the stale-tree refusal is
-    udocker-specific (same shape as the 2026-08-31 coreboot submodule-wipe
-    investigation), and pre-clean
-    `workspace/src/coreboot/payloads/external/edk2` before any retry;
-    otherwise, revert to the external-component approach (uncomment the
-    `edk2-uefipayload` stack entry, restore `CONFIG_PAYLOAD_FILE`, drop
-    `CONFIG_PAYLOAD_EDK2`/`CONFIG_EDK2_UNIVERSAL_PAYLOAD`).
+17. ~~`qemu-arm64-coreboot-efi-barebox`'s native `CONFIG_PAYLOAD_EDK2` path
+    hangs on an interactive git credential prompt~~ — **root-caused for
+    real, 2026-09-02, two distinct bugs, both fixed:**
+    1. `payloads/external/edk2/Makefile`'s `$(EDK2_PATH)` rule only
+       re-clones when the directory is entirely missing, and swallows
+       `git fetch`'s stderr — an interrupted `git clone` (the credential
+       hang below, mid-flight) had left a real half-initialized repo
+       (remote configured, zero commits, no fetch refspec), so every later
+       build just fetched nothing and failed with the misleading `refs/tags/
+       edk2-stable202608 is not a valid git reference`. Fixed with
+       `manifests/components/coreboot/files/0001-edk2-payload-self-heal-clone-and-fetch-tags.patch`
+       (ADR-007): re-clone whenever `$(EDK2_PATH)` has no `HEAD`, fetch with
+       `--tags` and a fallback refspec, fail loud instead of `2>/dev/null`.
+    2. The credential prompt itself: confirmed for real, repeatably, that
+       `git ls-remote https://github.com/tianocore/edk2` succeeds from the
+       host but fails every time from inside the `coreboot-sdk` udocker/proot
+       container with `fatal: could not read Username ... terminal prompts
+       disabled` — `GIT_CURL_VERBOSE=1` showed why: GitHub answers the HTTP/2
+       `POST .../git-upload-pack` (the real pack negotiation, after a
+       perfectly good `200` on the `info/refs` GET) with a genuine `401` +
+       `www-authenticate: Basic`, i.e. HTTP/2 request framing is getting
+       corrupted somewhere in proot's syscall interception and GitHub reads
+       it as unauthenticated. `git -c http.version=HTTP/1.1 ls-remote ...`
+       fixed it instantly, twice in a row, same container. Fixed by adding
+       `git config --system http.version HTTP/1.1` to `coreboot-sdk.yaml`'s
+       `provision:` (applied to the live container too, not just the
+       manifest) plus `GIT_TERMINAL_PROMPT: "0"` in its `env:` (was
+       previously only exported inline in `coreboot.yaml`'s `build.command`,
+       so a manual `emblab shell` session got no protection at all — this
+       makes it apply everywhere). Only affects `coreboot-sdk`: every other
+       image's git usage goes through emblab's own `sources.py`, which runs
+       `git` on the host, never inside a container.
+    Still real and unconfirmed: the fetch/clone step now succeeds, but this
+    session didn't get a `qemu-arm64-coreboot-efi-barebox` build far enough
+    to hit the *other*, already-documented gap in this same file's header
+    comment — coreboot's `payloads/external/edk2/Makefile` hardcodes `-a
+    IA32`/`-D BUILD_ARCH=X64` with no AArch64 codepath at all, so this native
+    path may still not produce a working AArch64 build even now that it can
+    fetch. The known-working fallback if that's confirmed a real blocker:
+    the external `edk2-uefipayload` component + coreboot's
+    `CONFIG_PAYLOAD_FILE="${edk2-uefipayload.payload}"` (same shape as
+    `qemu-arm64-coreboot-barebox`'s UefiPayloadPkg-as-payload entry under
+    Proven).
 
 ## Open questions
 - Pin exact git refs (tags/SHAs) for `tf-a`, `optee-os`, `barebox`,
