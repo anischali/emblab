@@ -72,7 +72,6 @@ build:
     set -e;
     export PACKAGES_PATH=$PWD;
     export GCC_${vars.edk2_arch}_PREFIX=$CROSS_COMPILE;
-    pip3 install --break-system-packages -r pip-requirements.txt;
     . ./edksetup.sh;
     make -C BaseTools;
     if [ -n "${vars.upl_fit}" ]; then

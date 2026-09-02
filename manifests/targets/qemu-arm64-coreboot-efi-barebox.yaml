@@ -37,17 +37,18 @@ stack:
       extra_conf: |
         CONFIG_CONSOLE_ACTIVATE_ALL=y
         CONFIG_EFI_PAYLOAD_ESP_IMAGE=y
-
-  - component: edk2-uefipayload
-    image: gnu-aarch64
-    builddeps:
-      - iasl
-      - uuid-dev
-      - cmake
-    vars:
-      edk2_arch: AARCH64
-      upl_fit: true
-      load_address: "0x48000000"
+  #
+  # - component: edk2-uefipayload
+  #  image: gnu-aarch64
+  #  builddeps:
+  #    - iasl
+  #    - uuid-dev
+  #    - cmake
+  #  vars:
+  #    edk2_arch: AARCH64
+  #    upl_fit: true
+  #    load_address: "0x48000000"
+  #
 
   - component: coreboot
     # coreboot-sdk ships a prebuilt cross-toolchain (see coreboot.yaml) —
@@ -60,7 +61,8 @@ stack:
         # CONFIG_PAYLOAD_NONE is not set
         CONFIG_PAYLOAD_EDK2=y
         CONFIG_EDK2_UNIVERSAL_PAYLOAD=y
-        CONFIG_PAYLOAD_FILE="${edk2-uefipayload.payload}"
+        CONFIG_EDK2_SERIAL_SUPPORT=y
+        ## CONFIG_PAYLOAD_FILE="${edk2-uefipayload.payload}"
 qemu:
   binary: qemu-system-aarch64
   image: qemu-runner
