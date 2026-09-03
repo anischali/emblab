@@ -28,8 +28,15 @@ build:
     # only wants a standalone bl31.elf — e.g. coreboot's own
     # CONFIG_ARM64_BL31_EXTERNAL_FILE, which hands off back to coreboot
     # itself rather than a BL33 TF-A packs into a fip — overrides this to
-    # "all", dropping fip (and its BL33 requirement) entirely.
+    # "all", dropping fip (and its BL33 requirement) entirely. When it
+    # does, it must also blank fip_path/qemu_fw_path below (fip.bin and
+    # qemu_fw.bios are fip byproducts, never produced without it) — an
+    # artifact path that resolves to "" is skipped by the driver instead
+    # of failing as a missing file after the build (same convention as
+    # bl32_flags/bl33 above).
     make_targets: "all fip"
+    fip_path: build/qemu/debug/fip.bin
+    qemu_fw_path: build/qemu/debug/qemu_fw.bios
   # YAML folded scalar (>-) joins same-indentation lines with a bare space,
   # not a shell separator — every statement below ends in an explicit ";"
   # so the fold can't merge two statements into one invalid command (a
@@ -47,6 +54,6 @@ build:
     ${vars.make_targets} $extra_args
 artifacts:
   bl1: build/qemu/debug/bl1.bin
-  fip: build/qemu/debug/fip.bin
+  fip: ${vars.fip_path}
   elf: build/qemu/debug/bl31/bl31.elf
-  qemu_fw: build/qemu/debug/qemu_fw.bios
+  qemu_fw: ${vars.qemu_fw_path}

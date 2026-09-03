@@ -23,6 +23,59 @@ stack:
       extra_conf: |
         CONFIG_BOARD_GENERIC_FIT=y
         CONFIG_CONSOLE_ACTIVATE_ALL=y
+        # No literal quote chars in this block — see coreboot.yaml. The
+        # compiled-in qemu-virt64 DT declares a cfi-flash node at 0x0 (the
+        # usual QEMU pflash region), but qemu.args below pass no -drive
+        # if=pflash to back it: probing an unbacked CFI chip spins forever
+        # polling a status/ready bit that never arrives, hanging boot right
+        # after PSCI detection. No driver bound means it stays unprobed.
+        # CONFIG_DRIVER_CFI is not set
+        # The pcie@10000000 node (pci-host-ecam-generic) enumerates a real
+        # QEMU PCIe root port bridge (1b36:0008) at bus 0 and hangs
+        # scanning behind it — confirmed for real (150s wait, no further
+        # initcall/probe line ever printed past it). Root cause not
+        # isolated further (likely a bridge secondary-bus-number
+        # programming/rescan issue in barebox generic PCI core, not this
+        # driver itself, a thin ECAM cfg-space accessor with no polling
+        # loop of its own) - disabling PCI outright to unblock boot; this
+        # also drops virtio-rng-pci (the only PCI device qemu.args below
+        # attaches), so entropy comes from the software PRNG (prng_init,
+        # already in the initcall list) instead.
+        # CONFIG_PCI itself cannot be turned off directly: PCI_ECAM_GENERIC/
+        # PCIE_DW/PCI_ROCKCHIP each select PCI in their own Kconfig entries,
+        # forcing it back on over an explicit "is not set" unless the
+        # selecting symbol is disabled too. Disabling the one that actually
+        # matches this DT node is enough; PCI itself then turns off on its
+        # own since nothing else selects it.
+        # CONFIG_PCI_ECAM_GENERIC is not set
+
+  - component: optee-os
+    image: gnu-aarch64
+    vars:
+      platform: vexpress-qemu_armv8a
+
+  - component: tf-a
+    image: gnu-aarch64
+    # GENERATE_COT=1 in tf-a's command builds cert_create, which links
+    # against GnuTLS for X.509 certificate generation — not in
+    # gnu-aarch64's shared package set since no other component in this
+    # stack needs it (see ADR-009).
+    builddeps:
+      - libgnutls28-dev
+    vars:
+      plat: qemu
+      bl32_flags: >-
+        BL32=${optee-os.tee-header} BL32_EXTRA1=${optee-os.tee-pager} BL32_EXTRA2=${optee-os.tee-pageable}
+      # No bl33/bl33_flags override: coreboot itself is BL33 here (BL31
+      # hands off back to coreboot's own payload loader, not to a BL33 TF-A
+      # packs into a fip) — make_targets below drops "fip" so TF-A's own
+      # "Platform 'qemu' requires BL33" check (which only fires for fip)
+      # never triggers. fip_path/qemu_fw_path blanked to match: neither
+      # file gets built without "fip", so leaving them declared would fail
+      # the build with a false "declared artifact not found" error.
+      make_targets: "all"
+      fip_path: ""
+      qemu_fw_path: ""
 
   - component: coreboot
     # coreboot-sdk ships a prebuilt cross-toolchain (see coreboot.yaml) —
@@ -35,6 +88,7 @@ stack:
         # CONFIG_PAYLOAD_NONE is not set
         CONFIG_PAYLOAD_FIT=y
         CONFIG_PAYLOAD_FILE="${barebox.images}/barebox-arm64.fit"
+        CONFIG_ARM64_BL31_EXTERNAL_FILE="${tf-a.elf}"
         CONFIG_MAINBOARD_VENDOR="linux"
         CONFIG_MAINBOARD_PART_NUMBER="dummy-virt"
 

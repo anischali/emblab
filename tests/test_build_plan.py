@@ -30,6 +30,11 @@ def _precreate_source_and_artifacts(workspace, component, entry=None):
     env = {"JOBS": "4", "WORKSPACE": str(workspace), "ARCH": ""}
     for raw_rel_path in component.artifacts.values():
         rel_path = templating.resolve_value(raw_rel_path, merged_vars=merged_vars, env=env, artifacts={})
+        if rel_path == "":
+            # An artifact whose path resolves empty is this build's way of
+            # saying "not produced" (see build.py's active_artifacts) —
+            # nothing to precreate.
+            continue
         if rel_path.endswith("/"):
             d = src_dir / rel_path
             d.mkdir(parents=True, exist_ok=True)
@@ -69,15 +74,25 @@ def test_build_plan_renders_verbatim_tfa_command(tmp_path, monkeypatch):
     rendered = tfa_cmds[0]
 
     artifacts_root = str(tmp_path / "artifacts" / TARGET_NAME)
-    expected = (
-        "make -j4 CROSS_COMPILE=$CROSS_COMPILE PLAT=qemu DEBUG=1 -B "
-        "RESET_TO_BL31=1 LOG_LEVEL=30 "
+    bl32_flags = (
         f"BL32={artifacts_root}/optee-os/tee-header "
         f"BL32_EXTRA1={artifacts_root}/optee-os/tee-pager "
-        f"BL32_EXTRA2={artifacts_root}/optee-os/tee-pageable "
-        "BL32_RAM_LOCATION=tdram SPD=opteed GENERATE_COT=1 all fip "
-        "ARM_LINUX_KERNEL_AS_BL33=1 "
-        f"BL33={artifacts_root}/barebox/images/barebox-dt-2nd.img"
+        f"BL32_EXTRA2={artifacts_root}/optee-os/tee-pageable"
+    )
+    bl33 = f"{artifacts_root}/barebox/images/barebox-dt-2nd.img"
+    # tf-a.yaml assembles extra_args conditionally (each of
+    # bl32_flags/bl33_flags/bl33 only contributes when non-empty) rather
+    # than always interpolating all three inline — see its own command's
+    # comment for why (a bare-space YAML fold previously merged two
+    # statements into one invalid command, silently dropping these flags).
+    expected = (
+        'extra_args="";'
+        f' [ -n "{bl32_flags}" ] && extra_args="$extra_args {bl32_flags}";'
+        ' [ -n "ARM_LINUX_KERNEL_AS_BL33=1" ] && extra_args="$extra_args ARM_LINUX_KERNEL_AS_BL33=1";'
+        f' [ -n "{bl33}" ] && extra_args="$extra_args BL33={bl33}";'
+        " make -j4 CROSS_COMPILE=$CROSS_COMPILE PLAT=qemu DEBUG=1 -B"
+        " RESET_TO_BL31=1 LOG_LEVEL=30 BL32_RAM_LOCATION=tdram SPD=opteed GENERATE_COT=1"
+        " all fip $extra_args"
     )
     assert rendered == expected
 
@@ -117,17 +132,25 @@ def test_build_plan_secureboot_uboot_omits_arm_linux_kernel_as_bl33(tmp_path, mo
     assert "ARM_LINUX_KERNEL_AS_BL33" not in rendered
 
     artifacts_root = str(tmp_path / "artifacts" / target_name)
-    expected = (
-        "make -j4 CROSS_COMPILE=$CROSS_COMPILE PLAT=qemu DEBUG=1 -B "
-        "RESET_TO_BL31=1 LOG_LEVEL=30 "
+    bl32_flags = (
         f"BL32={artifacts_root}/optee-os/tee-header "
         f"BL32_EXTRA1={artifacts_root}/optee-os/tee-pager "
-        f"BL32_EXTRA2={artifacts_root}/optee-os/tee-pageable "
-        "BL32_RAM_LOCATION=tdram SPD=opteed GENERATE_COT=1 all fip "
-        # bl33_flags="" between two literal spaces in tf-a.yaml's command ->
-        # a double space here, same latent (harmless for make) behavior
-        # bl32_flags="" already has whenever a target leaves it unset.
-        f" BL33={artifacts_root}/u-boot/bin"
+        f"BL32_EXTRA2={artifacts_root}/optee-os/tee-pageable"
+    )
+    bl33 = f"{artifacts_root}/u-boot/bin"
+    # bl33_flags="" here -> its guard's [ -n "" ] test is false, so that
+    # statement contributes nothing to extra_args at all (no ARM_LINUX_
+    # KERNEL_AS_BL33, no stray empty flag) — cleaner than the old direct
+    # inline interpolation's latent double-space-but-harmless-for-make
+    # behavior when a flag var was left empty.
+    expected = (
+        'extra_args="";'
+        f' [ -n "{bl32_flags}" ] && extra_args="$extra_args {bl32_flags}";'
+        ' [ -n "" ] && extra_args="$extra_args ";'
+        f' [ -n "{bl33}" ] && extra_args="$extra_args BL33={bl33}";'
+        " make -j4 CROSS_COMPILE=$CROSS_COMPILE PLAT=qemu DEBUG=1 -B"
+        " RESET_TO_BL31=1 LOG_LEVEL=30 BL32_RAM_LOCATION=tdram SPD=opteed GENERATE_COT=1"
+        " all fip $extra_args"
     )
     assert rendered == expected
 

@@ -66,6 +66,18 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
         merged_vars = {**component.build.vars, **entry.vars}
         resolved_vars = templating.resolve_vars(merged_vars, env=component_env, artifacts=artifacts_by_component)
 
+        # An artifact whose path template resolves to "" is this build's
+        # way of saying "not produced this time" (same convention as an
+        # empty vars.bl32_flags/bl33 elsewhere) — e.g. tf-a's fip/qemu_fw
+        # are only built when vars.make_targets includes "fip"; a target
+        # that drops it also blanks vars.fip_path/qemu_fw_path so those
+        # keys are skipped here instead of failing as a missing file.
+        active_artifacts = {
+            key: rel_path
+            for key, rel_path in component.artifacts.items()
+            if templating.render_command(rel_path, resolved_vars=resolved_vars, env=component_env) != ""
+        }
+
         # Installed here, ahead of build.setup, not just ahead of
         # build.command below: ensure_builddeps is itself marker-based
         # idempotent (skips a no-op reinstall), and a component's setup step
@@ -98,7 +110,7 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
         current_hash = state.component_hash(
             component, resolved_vars, entry.builddeps, merged_patches, artifacts_by_component
         )
-        have_artifacts = state.artifacts_exist(workspace, target.name, component_name, component.artifacts)
+        have_artifacts = state.artifacts_exist(workspace, target.name, component_name, active_artifacts)
 
         if not force and not under_manual_edit and have_artifacts and state.marker_matches(marker_path, current_hash):
             log(f"[{component_name}] unchanged, skipping build")
@@ -128,7 +140,7 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
 
             dest_dir = artifacts_root / component_name
             dest_dir.mkdir(parents=True, exist_ok=True)
-            for key, rel_path in component.artifacts.items():
+            for key, rel_path in active_artifacts.items():
                 resolved_rel_path = templating.render_command(rel_path, resolved_vars=resolved_vars, env=component_env)
                 src = src_dir / resolved_rel_path
                 dst = dest_dir / key
@@ -150,7 +162,7 @@ def build(target_name, workspace, *, force=False, setup_force=False, only=None, 
             log(f"[{component_name}] built, artifacts collected")
 
         artifacts_by_component[component_name] = state.artifact_paths(
-            workspace, target.name, component_name, component.artifacts
+            workspace, target.name, component_name, active_artifacts
         )
         built.append(component_name)
 

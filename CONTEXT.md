@@ -866,6 +866,118 @@ hand-editing it under `workspace/src/<path>`.
      `SEC`, `_ModuleEntryPoint`) to bisect how far real execution gets
      before whatever is silencing it — see Next.
   83/83 offline tests pass unchanged.
+- 2026-09-02: **`qemu-arm64-coreboot-barebox` reverted from the abandoned
+  UefiPayloadPkg-as-payload approach back to barebox's own FIT (its
+  originally-proven-working shape) plus a new addition — coreboot loading
+  TF-A's externally-built `bl31.elf` directly
+  (`CONFIG_ARM64_BL31_EXTERNAL_FILE`) instead of building its own copy from
+  the vendored `3rdparty/arm-trusted-firmware` submodule — user-requested
+  ("I would like coreboot to directly [go] to bl31"), superseding Next's
+  old item 16 (that item's own UefiPayloadPkg approach no longer exists in
+  this target). `tf-a.yaml` gained `vars.make_targets` (default "all fip",
+  unchanged for every other target) so this target can override to "all"
+  and skip `fip`, which TF-A's own `qemu` platform otherwise refuses to
+  build without a real BL33 (`Platform 'qemu' requires BL33`) — not
+  needed here since coreboot itself is BL33 (BL31 hands off back to
+  coreboot's own payload loader via its own `bl_params`, not a BL33 TF-A
+  packs into a fip). Also fixed a real quoting/folding bug found getting
+  there: tf-a.yaml's `command` used to interpolate
+  `${vars.bl32_flags}`/`${vars.bl33_flags}`/`BL33=${vars.bl33}` directly
+  inline; rewritten to assemble them conditionally into a shell
+  `extra_args` var — necessary because YAML's `>-` folded scalar joins
+  same-indentation lines with a bare space, not a shell statement
+  separator, and an earlier draft of this same conditional logic (using
+  `local`/`if`/`fi`) silently ran `local` outside a function and dropped
+  the flags entirely rather than erroring loudly; every statement now
+  ends in an explicit `;` so the fold can't merge two into one invalid
+  command regardless of indentation.
+
+  A real `emblab build` + `emblab run` of this target then surfaced (and,
+  working with the user, root-caused) **three distinct real hangs**, all
+  confirmed for real against actual serial logs — this target had never
+  actually reached barebox's interactive prompt before, only "9p/
+  netconsole registering", which turned out to be the exact same hang
+  point as the first bug below:
+  1. **PSCI conduit mismatch**: barebox's own compiled-in `qemu-virt64.dts`
+     declares `psci { method = "hvc"; }`, correct only when a real
+     hypervisor at EL2 relays the call to EL3 — this boot chain (coreboot
+     -> BL31 directly at EL3, `virtualization=on` giving QEMU EL2 hardware
+     but no software running there) has nothing to trap `hvc`, so
+     barebox's PSCI driver's very first probe (`PSCI_VERSION` via `hvc`)
+     never returns and boot hangs silently right there, before any later
+     initcall ever runs — confirmed via `CONFIG_DEBUG_INITCALLS`/
+     `CONFIG_DEBUG_PROBES` (barebox's own initcall/probe tracer) showing
+     `probe-> psci.of` printed with no corresponding "detected version"
+     line following it, ever, even after a real 150s wait. Fixed by
+     patching the DT's conduit to `"smc"` (TF-A's BL31 answers `smc`
+     directly, no relay needed) — since `qemu-arm64-secureboot` shares
+     this exact DT and also boots via `RESET_TO_BL31` with no real
+     hypervisor (and has never actually been run yet, see Next), this
+     went into `barebox.yaml`'s own `build.patches` as a baseline fix
+     (ADR-007), not a per-target extra — new
+     `manifests/components/barebox/files/0001-arch-dts-qemu-virt64-use-smc-as-the-psci-conduit.patch`,
+     verified for real with `emblab reset barebox --reclone` (clean
+     fresh-clone + patch-apply, not just `git apply --check`).
+  2. **CFI flash node with no backing device**: same DT also declares a
+     `flash@0` `cfi-flash` node (QEMU's usual pflash region), but this
+     target's `qemu.args` pass no `-drive if=pflash` to back it — probing
+     an unbacked CFI chip spins forever polling a status/ready bit that
+     never arrives. Confirmed for real the same way (probe tracer showing
+     `probe-> 0.flash@0.of` as the last line printed, forever). Fixed
+     target-locally (not a barebox-wide default — other targets may
+     genuinely want real CFI flash) via `# CONFIG_DRIVER_CFI is not set`
+     in this target's own `extra_conf`.
+  3. **PCI ECAM host bridge scan hangs**: the DT's `pcie@10000000` node
+     (`pci-host-ecam-generic`) enumerates a real QEMU PCIe root port
+     bridge (`1b36:0008`, confirmed present in coreboot's own ramstage PCI
+     scan) and hangs scanning behind it — confirmed for real (150s wait,
+     no further initcall/probe line ever printed past
+     `probe-> 3f000000.pcie@10000000.of`). Root cause **not** isolated
+     further (barebox's ECAM driver itself,
+     `drivers/pci/pci-ecam-generic.c`, is a thin cfg-space accessor with
+     no polling loop of its own — the hang is somewhere in barebox's
+     generic PCI core's bus/bridge scan, not this driver — see Next).
+     Worked around target-locally with `# CONFIG_PCI_ECAM_GENERIC is not
+     set` (`CONFIG_PCI` itself can't be disabled directly — `PCIE_DW`/
+     `PCI_ROCKCHIP` both still `select PCI`) — this also drops
+     `virtio-rng-pci` (the only PCI device this target's `qemu.args`
+     attach), so entropy now comes from barebox's software PRNG instead.
+
+  Fixing bug 1 this way (`make_targets: "all"`, dropping `fip`) surfaced
+  a real, separate **driver gap**: `build.py`'s artifact-collection loop
+  unconditionally required every component-declared artifact to exist
+  after a build, but `tf-a.yaml`'s `fip`/`qemu_fw` artifacts are
+  byproducts of the `fip` target specifically — skipping `fip` correctly
+  means they're never produced, and the very first real fresh build after
+  this change (a `--force` full re-clone; earlier attempts were masked by
+  a stale artifacts/ copy from before `make_targets` existed) failed hard
+  with `declared artifact 'fip' not found`. Fixed generically, not as a
+  one-off: an artifact whose path template resolves to `""` is now
+  treated as "not produced this build" and silently skipped everywhere
+  (`build.py`'s new `active_artifacts`, filtered right after
+  `resolved_vars` — used for the collect loop, the unchanged-skip check,
+  and `artifacts_by_component`), the same convention already used for an
+  empty `vars.bl32_flags`/`bl33`. `tf-a.yaml`'s `fip`/`qemu_fw` artifact
+  values became `${vars.fip_path}`/`${vars.qemu_fw_path}` (default the
+  original literal paths, unchanged for every other target); this target
+  blanks both. `tests/test_build_plan.py`'s
+  `_precreate_source_and_artifacts` helper updated to match (skip
+  precreating an artifact that resolves empty) plus two other tests'
+  hardcoded expected tf-a commands updated for the `extra_args` rewrite
+  above (they were asserting the old direct-interpolation shape). 87/87
+  offline tests pass.
+
+  End state, confirmed for real end to end, no `-dirty` in the version
+  string (i.e. against the real committed patch, not a live hand-edit):
+  `emblab build qemu-arm64-coreboot-barebox` then `emblab run
+  qemu-arm64-coreboot-barebox` reaches a genuine interactive
+  `barebox@ARM QEMU virt64:/` prompt — bootblock -> romstage -> ramstage
+  -> BL31 (externally-built, SPD=opteed compiled in but no OP-TEE image
+  actually loaded — see Next) -> barebox, through PSCI detection, past
+  the (now-skipped) flash/PCI nodes, autoboot countdown, and the expected
+  "Nothing bootable found" (no disk/network media attached to this
+  target) landing at the prompt.
+
 ## In progress
 - `qemu-arm64-coreboot-efi-barebox` experimenting with coreboot's native
   `CONFIG_PAYLOAD_EDK2`/`CONFIG_EDK2_UNIVERSAL_PAYLOAD` fetch instead of the
@@ -974,14 +1086,55 @@ hand-editing it under `workspace/src/<path>`.
     directory` failures across unrelated object files, from a
     concurrent `rm -rf build` racing an in-flight `-j` compile) —
     resolved by hand again, same as before, not the driver.
-16. `qemu-arm64-coreboot-barebox`'s new UefiPayloadPkg-as-coreboot-payload
-    approach still does not boot — the payload loads and BL31 hands off
-    to it cleanly, but there is zero console output past that point and
-    the real cause has not been isolated yet. See Proven's 2026-08-31
-    entry for everything already ruled out (load address, EL2 entry,
-    compression) and the two concrete next diagnostic steps (QEMU
-    gdbstub session, or an early raw UART poke patched into
-    `UefiPayloadEntry.c`).
+16. ~~`qemu-arm64-coreboot-barebox`'s new UefiPayloadPkg-as-coreboot-payload
+    approach still does not boot~~ — **superseded, 2026-09-02: this target
+    reverted to barebox's own FIT** (plus coreboot loading TF-A's
+    externally-built `bl31.elf` directly) and now boots for real to an
+    interactive prompt — see Proven. The UefiPayloadPkg-as-payload
+    approach this item described no longer exists in this target's
+    manifest; its own diagnostic history stays in this file's git log if
+    a future session wants to revisit bundling barebox as a UEFI app
+    again.
+16b. `qemu-arm64-coreboot-barebox`'s PCI ECAM host bridge scan hangs
+    (`probe-> 3f000000.pcie@10000000.of` never returns) — currently
+    worked around by disabling `CONFIG_PCI_ECAM_GENERIC` entirely (see
+    Proven), not root-caused. barebox's `drivers/pci/pci-ecam-generic.c`
+    is a thin cfg-space accessor with no polling loop of its own, so the
+    real hang is somewhere in barebox's generic PCI core's bus/bridge
+    scan (`drivers/pci/pci.c`) — likely something around the real QEMU
+    PCIe root port bridge (`1b36:0008`, a genuine type-1 header device,
+    confirmed present via coreboot's own ramstage PCI scan) needing its
+    secondary/subordinate bus numbers programmed before barebox recurses
+    into scanning behind it. Re-enabling PCI (and `virtio-rng-pci`,
+    dropped as a side effect of the workaround) would need this isolated
+    for real, e.g. `CONFIG_PCI_DEBUG=y` for barebox's own PCI-core debug
+    prints, or a QEMU gdbstub session breaking on the ECAM MMIO region.
+16c. `qemu-arm64-coreboot-barebox` boots with **no OP-TEE actually
+    loaded** — TF-A's BL31 is built with `SPD=opteed` (via `bl32_flags`)
+    but `make_targets: "all"` (no `fip`) means the OP-TEE header/pager/
+    pageable images built by `optee-os` are never actually placed
+    anywhere BL31 can find them at `RESET_TO_BL31` entry, so BL31 always
+    logs "No OPTEE provided by BL2 boot loader" and disables the SPD
+    ("Error initializing runtime service opteed_fast"). Real fix
+    identified but not attempted: coreboot's own generic mechanism for
+    this (`src/arch/arm64/bl31.c`'s `run_bl31()`, gated on
+    `CONFIG_ARM64_USE_SECURE_OS`) already loads a `secure_os` CBFS entry
+    and wires its entry point into the same `bl_params` struct it builds
+    for BL33 — needs `CONFIG_ARM64_USE_SECURE_OS=y` +
+    `CONFIG_ARM64_SECURE_OS_FILE="${optee-os.???}"` pointing at a real
+    OP-TEE image coreboot can self-load (probably needs
+    `CFG_TEE_CORE_PAGER=n`, a monolithic non-paged build, rather than
+    optee-os.yaml's current paged header/pager/pageable split meant for
+    TF-A's own BL2 to load piecewise) plus
+    `CONFIG_ARM64_USE_SECURE_OS_PAYLOAD=y` (ELF via `selfload`, not
+    coreboot's own "stage" format). `CONFIG_ARM64_BL31_OPTEE_WITH_SMC`
+    (the option this session initially tried, on the user's own "try
+    optee smc" hint) turned out to be a dead no-op for an externally-built
+    BL31 — confirmed for real by reading `arch/arm64/Makefile.mk`: its
+    entire effect (`SPD=opteed`/`OPTEE_ALLOW_SMC_LOAD=1` on TF-A's build)
+    lives inside the `ARM64_BL31_EXTERNAL_FILE == ""` branch only, and its
+    only real SMC-issuing C code in-tree is MediaTek-SoC-specific, not
+    something the qemu-aarch64 emulation board has.
 
 17. ~~`qemu-arm64-coreboot-efi-barebox`'s native `CONFIG_PAYLOAD_EDK2` path
     hangs on an interactive git credential prompt~~ — **root-caused for

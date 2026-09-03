@@ -9,6 +9,14 @@ source:
   ref: master
   path: barebox
 build:
+  # 0001-...: barebox's own compiled-in qemu-virt64 DT declares PSCI's
+  # conduit as "hvc", correct only when a real hypervisor at EL2 relays it
+  # to EL3 — every target in this project boots with TF-A's BL31 directly
+  # at EL3 and nothing at EL2, so the correct conduit is "smc" universally
+  # here, not just for one target. See the patch body for the full boot
+  # chain this fixes (hangs on the very first PSCI probe otherwise).
+  patches:
+    - 0001-arch-dts-qemu-virt64-use-smc-as-the-psci-conduit.patch
   # esp.cfg turns on CONFIG_EFI_PAYLOAD_ESP_IMAGE, producing a bootable
   # GPT/FAT disk image (images/barebox.esp) with barebox's EFI stub at the
   # standard UEFI removable-media path — any UEFI firmware boots it with
