@@ -23,4 +23,6 @@ provision:
   - >-
     apt-get install -y --no-install-recommends
     qemu-system-arm qemu-system-misc qemu-system-x86 ipxe-qemu seabios bash-completion
+  # Prebuilt EDK2 firmware for qemu-arm64-uefi-barebox's -bios.
+  - apt-get install -y --no-install-recommends qemu-efi-aarch64
 env: {}

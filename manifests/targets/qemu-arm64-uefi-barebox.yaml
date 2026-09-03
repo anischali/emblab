@@ -27,6 +27,8 @@ qemu:
     - "-device"
     - "ramfb"
     - "-bios"
-    - "/usr/share/edk2/aarch64/QEMU_EFI.silent.fd"
+    # Debian's qemu-efi-aarch64 package ships this path, no "silent"
+    # (debug-console-suppressed) build like some other distros' package.
+    - "/usr/share/qemu-efi-aarch64/QEMU_EFI.fd"
     - "-kernel"
     - "${barebox.images}/barebox-dt-2nd.img"

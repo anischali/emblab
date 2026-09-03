@@ -1002,6 +1002,14 @@ hand-editing it under `workspace/src/<path>`.
   `artifact_paths()`. 87/87 offline tests still pass; re-verified for
   real — `emblab run qemu-arm64-coreboot-barebox` now reaches the same
   `barebox@ARM QEMU virt64:/` prompt described above, this time for real.
+- 2026-09-03: `emblab run qemu-arm64-uefi-barebox` failed: `Could not find
+  ROM image '/usr/share/edk2/aarch64/QEMU_EFI.silent.fd'` — `qemu-runner`
+  never installed the host EDK2 package this target's `-bios` needs, and
+  that exact path/filename don't exist in Debian anyway (no "silent"
+  variant; real path is `/usr/share/qemu-efi-aarch64/QEMU_EFI.fd`). Fixed
+  by adding `qemu-efi-aarch64` to `qemu-runner.yaml`'s `provision:` and
+  pointing the target's `-bios` at the real path. Re-verified for real:
+  EDK2 firmware boots and chain-loads barebox to its prompt.
 
 ## In progress
 - `qemu-arm64-coreboot-efi-barebox` experimenting with coreboot's native
