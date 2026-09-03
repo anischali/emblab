@@ -23,13 +23,30 @@ build:
     # target overrides bl33_flags to "" for that case.
     bl33_flags: "ARM_LINUX_KERNEL_AS_BL33=1"
     bl33: ""
+    # "fip" requires BL33 non-empty (TF-A's own qemu platform.mk fails the
+    # build otherwise: "Platform 'qemu' requires BL33"). A target that
+    # only wants a standalone bl31.elf — e.g. coreboot's own
+    # CONFIG_ARM64_BL31_EXTERNAL_FILE, which hands off back to coreboot
+    # itself rather than a BL33 TF-A packs into a fip — overrides this to
+    # "all", dropping fip (and its BL33 requirement) entirely.
+    make_targets: "all fip"
+  # YAML folded scalar (>-) joins same-indentation lines with a bare space,
+  # not a shell separator — every statement below ends in an explicit ";"
+  # so the fold can't merge two statements into one invalid command (a
+  # bare-space join here silently ran `local` outside a function, and
+  # separately made `[ -n ... ]`'s test part of the *previous* command's
+  # word list instead of its own command, so the BL32/BL33 flags were
+  # silently dropped instead of erroring loudly).
   command: >-
+    extra_args="";
+    [ -n "${vars.bl32_flags}" ] && extra_args="$extra_args ${vars.bl32_flags}";
+    [ -n "${vars.bl33_flags}" ] && extra_args="$extra_args ${vars.bl33_flags}";
+    [ -n "${vars.bl33}" ] && extra_args="$extra_args BL33=${vars.bl33}";
     make -j${env.JOBS} CROSS_COMPILE=$CROSS_COMPILE PLAT=${vars.plat} DEBUG=1 -B
-    RESET_TO_BL31=1 LOG_LEVEL=30
-    ${vars.bl32_flags}
-    BL32_RAM_LOCATION=tdram SPD=opteed GENERATE_COT=1 all fip
-    ${vars.bl33_flags} BL33=${vars.bl33}
+    RESET_TO_BL31=1 LOG_LEVEL=30 BL32_RAM_LOCATION=tdram SPD=opteed GENERATE_COT=1
+    ${vars.make_targets} $extra_args
 artifacts:
   bl1: build/qemu/debug/bl1.bin
   fip: build/qemu/debug/fip.bin
+  elf: build/qemu/debug/bl31/bl31.elf
   qemu_fw: build/qemu/debug/qemu_fw.bios
