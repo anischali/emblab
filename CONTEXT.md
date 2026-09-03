@@ -976,7 +976,32 @@ hand-editing it under `workspace/src/<path>`.
   actually loaded — see Next) -> barebox, through PSCI detection, past
   the (now-skipped) flash/PCI nodes, autoboot countdown, and the expected
   "Nothing bootable found" (no disk/network media attached to this
-  target) landing at the prompt.
+  target) landing at the prompt. **That "confirmed end to end" was a false
+  positive** — see 2026-09-03 entry below.
+- 2026-09-03: **`emblab run <target>` false "component ... has not been
+  built for target ... yet"**, for `tf-a` specifically on
+  `qemu-arm64-coreboot-barebox`. Root cause: `qemu.py`'s `resolve_args`
+  checked `state.artifacts_exist(...)` against a component's raw,
+  unfiltered `component.artifacts` dict — it was never updated for the
+  `active_artifacts` filtering `build.py` gained in the `a42842c`
+  standalone-`bl31.elf` change (above), which correctly skips collecting
+  `tf-a`'s `fip`/`qemu_fw` for this target (`make_targets: "all"` blanks
+  `fip_path`/`qemu_fw_path`, so those files are never produced). The
+  2026-09-02 "confirmed end to end" run above only passed because stale
+  `fip`/`qemu_fw` files from an earlier build (before `make_targets`
+  existed) were still sitting in `workspace/artifacts/`, satisfying the
+  buggy raw-dict check by accident — `build.py`'s own collect loop never
+  clears an artifacts dir before writing into it. Once those went away
+  (a `coreboot` upstream `ref: main` re-clone triggered a fresh full
+  rebuild), `emblab run` failed for real. Fixed by making `resolve_args`
+  mirror `build.py` exactly: topo-order the stack (`graph.topo_order`,
+  not raw stack order), resolve each component's merged vars with a
+  per-component `${files}` token (`sources.source_dir`), and filter
+  `component.artifacts` down to the same `active_artifacts` (paths that
+  don't template-resolve to `""`) before both the existence check and
+  `artifact_paths()`. 87/87 offline tests still pass; re-verified for
+  real — `emblab run qemu-arm64-coreboot-barebox` now reaches the same
+  `barebox@ARM QEMU virt64:/` prompt described above, this time for real.
 
 ## In progress
 - `qemu-arm64-coreboot-efi-barebox` experimenting with coreboot's native

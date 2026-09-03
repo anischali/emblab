@@ -16,7 +16,7 @@ container namespaces.
 
 from pathlib import Path
 
-from . import containers, manifests, state, templating
+from . import containers, graph, manifests, sources, state, templating
 from .errors import BuildError
 
 # Every target here runs QEMU inside a headless qemu-runner container (see
@@ -35,16 +35,36 @@ _DISPLAY_OVERRIDE_FLAGS = {"-nographic", "-display"}
 
 def resolve_args(target, workspace):
     env = templating.default_env(workspace, target.arch)
+    entries_by_component = {entry.component: entry for entry in target.stack}
     artifacts_by_component = {}
-    for entry in target.stack:
-        component = manifests.load_component(entry.component)
-        if not state.artifacts_exist(workspace, target.name, entry.component, component.artifacts):
+    # Same topo order build.py builds in, and the same active-artifacts
+    # filtering it applies before collecting (see build.py's
+    # active_artifacts): a component's declared artifacts: dict is not what
+    # actually landed on disk when one of its paths template-resolved to ""
+    # (e.g. tf-a's fip/qemu_fw are never produced for a target that drops
+    # "fip" from make_targets) — checking the raw, unfiltered dict here
+    # would report a fully-built component as "not built yet".
+    for component_name in graph.topo_order(target):
+        entry = entries_by_component[component_name]
+        component = manifests.load_component(component_name)
+        # Same per-component ${files} token build.py exposes (see there) —
+        # e.g. coreboot's own defconfig var embeds it, and resolve_vars below
+        # would otherwise raise "no files directory available here".
+        component_env = {**env, "FILES": str(sources.source_dir(workspace, component))}
+        merged_vars = {**component.build.vars, **entry.vars}
+        resolved_vars = templating.resolve_vars(merged_vars, env=component_env, artifacts=artifacts_by_component)
+        active_artifacts = {
+            key: rel_path
+            for key, rel_path in component.artifacts.items()
+            if templating.render_command(rel_path, resolved_vars=resolved_vars, env=component_env) != ""
+        }
+        if not state.artifacts_exist(workspace, target.name, component_name, active_artifacts):
             raise BuildError(
-                f"component '{entry.component}' has not been built for target "
+                f"component '{component_name}' has not been built for target "
                 f"'{target.name}' yet — run `emblab build {target.name}` first"
             )
-        artifacts_by_component[entry.component] = state.artifact_paths(
-            workspace, target.name, entry.component, component.artifacts
+        artifacts_by_component[component_name] = state.artifact_paths(
+            workspace, target.name, component_name, active_artifacts
         )
 
     args = [
